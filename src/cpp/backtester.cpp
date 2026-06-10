@@ -466,9 +466,9 @@ int main(int argc, char *argv[]) {
   }
 
   // Save detailed trades to results folder
-  std::string output_dir = "src/results/backtesting-results";
-  if (!fs::exists("src") && fs::exists("backtester.cpp")) {
-    output_dir = "../results/backtesting-results";
+  std::string output_dir = "results/backtesting-results";
+  if (!fs::exists("results") && fs::exists("backtester.cpp")) {
+    output_dir = "../../results/backtesting-results";
   }
   if (!fs::exists(output_dir)) {
     fs::create_directories(output_dir);
