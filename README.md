@@ -59,7 +59,7 @@ In this project, a quantitative analysis of market reactions to Trump's social m
 
 To assess the effectiveness and risk of our strategy, we compute the profit/loss percentage, maxinum drawdown, and Sharpe ratio. 
 
-# 📈 Results
+# Results
 ### Predictive accuracy of regression model
 The accuracy of the random forest regression model at predicting returns, volatility, and beta were measured by computing the coefficient of determination $R^2$ and root-mean-squared error (RMSE). 
 
