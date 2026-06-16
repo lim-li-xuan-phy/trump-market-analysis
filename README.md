@@ -49,15 +49,15 @@ In this project, a quantitative analysis of market reactions to Trump's social m
 **Prediction of direction of returns:** Utilizing the same data and features, we again use the random forest model to predict the direction of returns.
 
 **Backtesting:** Our trading strategy is parameterized by:
-- *Initial Capital*: $10,000.00
-- *Transaction Costs*: 5.0 basis points (0.05%) per trade
-- *Sentiment Entry Threshold*: $\pm 0.05$
-- *Holding Horizons*: 1-hour or 1-day, up to user.
-- *Trading Modes*:
-  - *Directional*: Long on positive sentiment, Short on negative sentiment.
-  - *Reversal*: Short on positive sentiment, Long on negative sentiment.
+- Initial Capital: $10,000.00
+- Transaction Costs: 5.0 basis points (0.05%) per trade
+- Sentiment Entry Threshold: $\pm 0.05$
+- Holding Horizons: 1-hour or 1-day, up to user.
+- Trading Modes:
+  - Directional: Long on positive sentiment, Short on negative sentiment.
+  - Reversal: Short on positive sentiment, Long on negative sentiment.
 
-The backtesting algorithm interpets the sentiment score of Trump's social media posts and registers buy and sell signals depending on the trading mode chosen by the user if the sentiment score is $<0.05$ or $>0.05$. If the sentiment score falls in the range -0.05 to 0.05, the hold signal is registered. To assess the effectiveness and risk of our strategy, we compute the profit/loss percentage, maxinum drawdown, and Sharpe ratio. 
+The backtesting algorithm interpets the sentiment score of Trump's social media posts and registers buy and sell signals depending on the trading mode chosen by the user if the sentiment score is $<0.05$ or $>0.05$. If the sentiment score falls in the range $-0.05$ to $0.05$, the hold signal is registered. To assess the effectiveness and risk of our strategy, we compute the profit/loss percentage, maxinum drawdown, and Sharpe ratio. 
 
 # Results
 ### Predictive accuracy of regression model
@@ -247,7 +247,7 @@ trump-market-analysis/
 
 # Future work
 - ✨ **Investigate why some profitable trading strategies fell or flattened:** Possible reasons are abnormal market conditions (eg. a change in volatility), strategy decay, or innate flaws of the strategy.
-- ✨ **Extend application of project to HFT:** Download market data in C++.
+- ✨ **Extend application of project to HFT:** Download market data using C++.
 - ✨ **Overcome sensitivity of MDI to variance:** Further measurement of feature importance with Mean Decrease Accuracy and Shapley values.
 - ✨ **Automatic trade execution:** Enable trades to be executed algorithmically by a Bash program that executes the whole pipeline of sentiment scoring and topic classification followed by trade execution.
 
