@@ -252,7 +252,7 @@ trump-market-analysis/
 - ✨ **Automatic trade execution:** Enable trades to be executed algorithmically by a Bash program that executes the whole pipeline of sentiment scoring and topic classification followed by trade execution.
 
 # Acknowledgements
-- Donald Trump because his social media posts inspired this project.
+- Donald Trump for inspiring this project.
 - Financial data provided by Massive API.
 - Trump's social media posts provided by the American Presidency Project archive.
 - Project was developed using pandas, scikit-learn, and seaborn.
