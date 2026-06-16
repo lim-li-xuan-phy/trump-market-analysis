@@ -102,7 +102,7 @@ The better-performing trading mode for each configuration and the corresponding 
 
 The equity growth of the 5 configurations with the highest Sharpe ratio over the timeframe of all available financial data are plotted below. 
 
-![](results/backtesting-results/equity_growth.png)
+![](results/backtesting-results/equity_curves.png)
 
 *YM China (1d)* is the only equity curve out of the five that consistently and steadily rises. This suggests that the risk on this trading strategy is well-controlled for various market regimes.👍
 
@@ -242,7 +242,7 @@ trump-market-analysis/
     │
     └──backtesting-results/  
         ├── backtest_performance_summary.png
-        └── equity_growth.png
+        └── equity_curves.png
 ```
 
 # Future work
