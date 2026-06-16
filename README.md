@@ -57,7 +57,7 @@ In this project, a quantitative analysis of market reactions to Trump's social m
   - *Directional*: Long on positive sentiment, Short on negative sentiment.
   - *Reversal*: Short on positive sentiment, Long on negative sentiment.
 
-The backtesting algorithm interpets the sentiment score of Trump's social media posts and registers buy and sell signals depending on the trading mode chosen by the user if the sentiment score is $\geq 0.05$ or $\leq 0.05$. If the sentiment score is between -0.05 and 0.05, the hold signal is registered. To assess the effectiveness and risk of our strategy, we compute the profit/loss percentage, maxinum drawdown, and Sharpe ratio. 
+The backtesting algorithm interpets the sentiment score of Trump's social media posts and registers buy and sell signals depending on the trading mode chosen by the user if the sentiment score is $<0.05$ or $>0.05$. If the sentiment score is between -0.05 and 0.05, the hold signal is registered. To assess the effectiveness and risk of our strategy, we compute the profit/loss percentage, maxinum drawdown, and Sharpe ratio. 
 
 # Results
 ### Predictive accuracy of regression model
