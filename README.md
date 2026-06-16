@@ -49,15 +49,15 @@ In this project, a quantitative analysis of market reactions to Trump's social m
 **Prediction of direction of returns:** Utilizing the same data and features, we again use the random forest model to predict the direction of returns.
 
 **Backtesting:** Our trading strategy is parameterized by:
-- **Initial Capital**: $10,000.00
-- **Transaction Costs**: 5.0 basis points (0.05%) per trade
-- **Sentiment Entry Threshold**: $\pm 0.05$
-- **Holding Horizons**: 1-hour or 1-day, up to user.
-- **Trading Modes**:
-  - **Directional**: Long on positive sentiment, Short on negative sentiment.
-  - **Reversal**: Short on positive sentiment, Long on negative sentiment.
+- *Initial Capital*: $10,000.00
+- *Transaction Costs*: 5.0 basis points (0.05%) per trade
+- *Sentiment Entry Threshold*: $\pm 0.05$
+- *Holding Horizons*: 1-hour or 1-day, up to user.
+- *Trading Modes*:
+  - *Directional*: Long on positive sentiment, Short on negative sentiment.
+  - *Reversal*: Short on positive sentiment, Long on negative sentiment.
 
-To assess the effectiveness and risk of our strategy, we compute the profit/loss percentage, maxinum drawdown, and Sharpe ratio. 
+The backtesting algorithm interpets the sentiment score of Trump's social media posts and registers buy and sell signals depending on the trading mode chosen by the user if the sentiment score is $\geq 0.05$ or $\leq 0.05$. If the sentiment score is between -0.05 and 0.05, the hold signal is registered. To assess the effectiveness and risk of our strategy, we compute the profit/loss percentage, maxinum drawdown, and Sharpe ratio. 
 
 # Results
 ### Predictive accuracy of regression model
@@ -234,15 +234,15 @@ trump-market-analysis/
 │    
 └── results/
     ├── ml-results/
-    │   ├── returns_RMSE.png
-    │   ├── vol_RMSE.png
-    │   ├── regression_fi.png           # Feature importances of regression models
-    │   ├── classification_performance.png
-    │   └── classification_fi.png       # Feature importances of classification models
+    │   ├── returns_RMSE.png                # RMSE of return predictions by the regression models
+    │   ├── vol_RMSE.png                    # RMSE of volatility predictions by the regression models
+    │   ├── regression_fi.png               # Feature importances of regression models
+    │   ├── classification_performance.png  # Performance metrics of classification models
+    │   └── classification_fi.png           # Feature importances of classification models
     │
     └──backtesting-results/  
-        ├── backtest_performance_summary.png
-        └── equity_curves.png
+        ├── backtest_performance_summary.png  # Performance metrics of trading strategy during backtesting
+        └── equity_curves.png                 # Equity curves of top 5 trading strategies
 ```
 
 # Future work
