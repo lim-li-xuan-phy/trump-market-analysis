@@ -2,9 +2,9 @@ name: CI/CD program
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, sql ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, sql ]
 
 jobs:
   test-and-build:
