@@ -15,8 +15,8 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_DB: trump_market_analysis
-          POSTGRES_USER: your_username
-          POSTGRES_PASSWORD: your_password
+          POSTGRES_USER: ${{ secrets.DB_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
         ports:
           - 5432:5432
         options: >-
@@ -45,12 +45,12 @@ jobs:
         run: |
           mkdir -p src
           cat <<EOF > src/.env
-          MASSIVE_API_KEY=your_API_key
+          MASSIVE_API_KEY=${{ secrets.MASSIVE_API_KEY }}
           DB_HOST=localhost
           DB_PORT=5432
           DB_NAME=trump_market_analysis
-          DB_USER=your_username
-          DB_PASSWORD=your_password
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           EOF
 
       - name: Run Pytest Suites
