@@ -8,6 +8,7 @@ import sys
 import argparse
 import pandas as pd
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from db_manager import get_connection
 
 # Regex patterns for topic classification
 TOPIC_KEYWORDS = {
@@ -80,49 +81,63 @@ def classify_topic(text):
             
     return best_topic
 
+
+def get_sentiment(text, sia):
+    """
+    Analyzes sentiment of a text using VADER SentimentIntensityAnalyzer.
+    Returns a tuple of (sentiment_label, compound_score).
+    """
+    if not isinstance(text, str):
+        text = ""
+    scores = sia.polarity_scores(text)
+    compound = scores['compound']
+    if compound >= 0.05:
+        return 'positive', compound
+    elif compound <= -0.05:
+        return 'negative', compound
+    else:
+        return 'neutral', compound
+
+
 def main():
     parser = argparse.ArgumentParser(description="Trump Posts Sentiment NLP & Topic Classification")
-    parser.add_argument('--input', type=str, default='../../data/trump_posts.csv',
-                        help='Path to input trump_posts.csv file')
-    parser.add_argument('--output', type=str, default='../../data/trump_posts_nlp.csv',
-                        help='Path to output trump_posts_nlp.csv file')
     parser.add_argument('--test', action='store_true',
                         help='Run in test mode on first 50 posts')
     
     args = parser.parse_args()
     
-    # Handle absolute and relative file paths of input/output files
-    input_file = args.input
-    if not os.path.exists(input_file):
-        print(f"Error: Input file not found at {args.input}")
-        sys.exit(1)
-    if not os.path.isabs(input_file):
-        input_file = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), input_file))
-    output_file = args.output
-    if not os.path.isabs(output_file):
-        output_file = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), output_file))
-    
     print(f"Starting sentiment analysis and topic classification...")
-    print(f"Input file:  {input_file}")
-    print(f"Output file: {output_file}")
+    print("Input source: PostgreSQL database (trump_posts table)")
+    
     if args.test:
         print("Running in TEST MODE (first 50 posts only)")
 
     # Read data
+    timestamps = []
+    messages = []
+    
     try:
-        df = pd.read_csv(input_file)
+        conn = get_connection()
+        cursor = conn.cursor()
+        query = "SELECT timestamp_utc, message FROM trump_posts ORDER BY timestamp_utc DESC"
+        if args.test:
+            query += " LIMIT 50"
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        for r in rows:
+            timestamps.append(r[0])
+            messages.append(r[1])
+        cursor.close()
+        conn.close()
     except Exception as e:
-        print(f"Error reading CSV file: {e}")
+        print(f"Error reading from PostgreSQL database: {e}")
         sys.exit(1)
         
-    if 'message' not in df.columns:
-        print("Error: 'message' column not found in input CSV.")
-        sys.exit(1)
-        
-    if args.test:
-        df = df.head(50).copy()
-        
-    print(f"Loaded {len(df)} posts for analysis.")
+    total_posts = len(messages)
+    print(f"Loaded {total_posts} posts for analysis.")
+    if total_posts == 0:
+        print("No posts found. Exiting.")
+        sys.exit(0)
 
     # Initialize VADER sentiment analyzer
     try:
@@ -139,38 +154,36 @@ def main():
     sentiment_labels = []
     topics = []
     
-    for idx, row in df.iterrows():
-        msg = str(row['message']) if not pd.isna(row['message']) else ""
+    for msg in messages:
+        msg_str = str(msg) if not pd.isna(msg) else ""
         
         # Sentiment
-        scores = sia.polarity_scores(msg)
-        compound = scores['compound']
-        sentiment_scores.append(compound)
-        
-        if compound >= 0.05:
-            sentiment_labels.append('positive')
-        elif compound <= -0.05:
-            sentiment_labels.append('negative')
-        else:
-            sentiment_labels.append('neutral')
+        label, score = get_sentiment(msg_str, sia)
+        sentiment_labels.append(label)
+        sentiment_scores.append(score)
             
         # Topic
-        topic = classify_topic(msg)
+        topic = classify_topic(msg_str)
         topics.append(topic)
 
-    df['sentiment'] = sentiment_labels
-    df['sentiment_score'] = sentiment_scores
-    df['topic'] = topics
-
-    # Ensure parent directory for output exists
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    
-    # Save output CSV
+    # Save output to Database
     try:
-        df.to_csv(output_file, index=False)
-        print(f"Analysis completed successfully. Results saved to {output_file}")
+        print("Saving results back to PostgreSQL database...")
+        conn = get_connection()
+        cursor = conn.cursor()
+        update_query = """
+            UPDATE trump_posts 
+            SET sentiment = %s, sentiment_score = %s, topic = %s 
+            WHERE timestamp_utc = %s
+        """
+        records = list(zip(sentiment_labels, sentiment_scores, topics, timestamps))
+        cursor.executemany(update_query, records)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("Successfully updated database records.")
     except Exception as e:
-        print(f"Error saving output CSV file: {e}")
+        print(f"Error writing to PostgreSQL database: {e}")
         sys.exit(1)
 
     # Print summary statistics
@@ -178,18 +191,22 @@ def main():
     print("                NLP SUMMARY STATS                ")
     print("="*40)
     
-    total = len(df)
+    # Create temporary dataframe for printing of summary stats
+    df_stats = pd.DataFrame({
+        'sentiment': sentiment_labels,
+        'topic': topics
+    })
     
     print("\nSentiment Distribution:")
-    sent_counts = df['sentiment'].value_counts()
+    sent_counts = df_stats['sentiment'].value_counts()
     for label, count in sent_counts.items():
-        pct = (count / total) * 100 #percentage
+        pct = (count / total_posts) * 100
         print(f"  {label:<10}: {count:>5} ({pct:>5.1f}%)")
         
     print("\nTopic Distribution:")
-    topic_counts = df['topic'].value_counts()
+    topic_counts = df_stats['topic'].value_counts()
     for label, count in topic_counts.items():
-        pct = (count / total) * 100
+        pct = (count / total_posts) * 100
         print(f"  {label:<18}: {count:>5} ({pct:>5.1f}%)")
     print("="*40)
 
