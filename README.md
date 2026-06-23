@@ -142,9 +142,17 @@ ren .env.example .env
 mv .env.example .env
 ```
 
-5. Set `DB_USER` and `DB_PASSWORD` to the username and password of your chosen database.
+5. Open the newly renamed `.env` file.
+```
+# Windows
+start .env
+# MacOS
+open .env
+#Linux
+xdg-open .env
+```
 
-6. Create an account on Massive.com and get your API key. In the newly-renamed `.env` file, set `MASSIVE_API_KEY` to your key.
+6. Create an account on Massive.com and get your API key. In the opened `.env` file, set `MASSIVE_API_KEY` to your key, and `DB_USER` and `DB_PASSWORD` to the username and password of your chosen database.
 
 7. Create virtual environment.
 ```
@@ -159,15 +167,17 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-9. Navigate to the `python/` folder. 
+9. Navigate to the `python/` folder and install dependencies. 
 ```
 cd python
+pip install -r requirements.txt
 ```
+
 To reproduce the plots and tables described in [Results](#results), follow the rest of the steps in [Reproduce the Analysis](#reproduce-the-analysis). 
 
 To do a ⏩ Quick start, run:
 ```
-print_latest_signals.py
+python print_latest_signals.py
 ```
 A table of the trading signals of the latest 5 posts will be generated.
 
@@ -184,63 +194,63 @@ Go through the steps in Quick start before continuing with the rest of the steps
 
 10. Scrape all of Trump's Truth Social text posts from the archive and saved into the file `trump_posts.py`.
 ```
-scrape_posts.py
+python scrape_posts.py
 ```
 
 11. Download the financial data corresponding to the time range of the posts. If your Massive account is on the free tier, it will take approximately 1 day to download all available financial data.
 ```
-download_market_data.py
+python download_market_data.py
 ```
 You have downloaded all the raw data to be used in your analysis. Next, we process the raw data for event study.
 
 **Event study**
 
-11. Navigate to the folder containing the C++ programs.
+12. Navigate to the folder containing the C++ programs.
 ```
 cd ../cpp
 ```
-12. Compile all C++ programs. This will create an EXE file of each C++ program.
+13. Compile all C++ programs. This will create an EXE file of each C++ program.
 ```
 .\compile.bat
 cd ../../
 ```
-13. Run `event_study_engine.exe`. The file `event_study_results.csv` containing the returns and volatility at various frequencies will be created in `data/` folder.
+14. Run `event_study_engine.exe`. The file `event_study_results.csv` containing the returns and volatility at various frequencies will be created in `data/` folder.
 ```
 .\src\cpp\event_study_engine.exe
 ```
 
 **Sentiment scoring and topic classification**
 
-14. Compute the sentiment scores of Trump's posts using the NLP model and classify each post into preset topics. The data will be saved into the file `trump_posts_nlp.csv`.
+15. Compute the sentiment scores of Trump's posts using the NLP model and classify each post into preset topics. The data will be saved into the file `trump_posts_nlp.csv`.
 ```
-cd ../python
+cd src/python
 python nlp.py
 ```
 **Predictive models**
 
 These instructions will guide you to generate the predictive accuracy and feature importance visualizations presented in [Results](#-results). 
 
-15. On your file explorer, open the file `src/python/model_training.ipynb`. 
-16. Run the code cells one-by-one to train and evaluate random forest models for predicting next returns, volatility and beta values, and the next direction of returns. 
+16. On your file explorer, open the file `src/python/model_training.ipynb` with a code editor. 
+17. Run the code cells one-by-one to train and evaluate random forest models for predicting next returns, volatility and beta values, and the next direction of returns. 
 
 **Backtesting of trading strategy**
 
 These instructions will guide you to generate the backtesting plots presented in [Results](#-results).
 
-17. On your file explorer, open the file `src/python/backtest_analysis.ipynb`.
-18. Run the code cells one-by-one to run the file `src\cpp\backtester.exe` you had earlier compiled from its C++ program on "good" configurations of topic | asset | interval. 
+18. On your file explorer, open the file `src/python/backtest_analysis.ipynb` with a code editor.
+19. Run the code cells one-by-one to run the file `src\cpp\backtester.exe` you had earlier compiled from its C++ program on "good" configurations of topic | asset | interval. 
 
 That completes our analysis! (ﾉ^ヮ^)ﾉ*:・ﾟ✧
 
 # Tests
 There are tests in this project to ensure various features are functioning as expected. They are useful if you are modifying any part of the code. To execute the tests of your choice, follow the below instructions.
 
-On a shell, activate your virtual environment and navigate to the project root directory, `trump-market-analysis/`. 
+On a terminal, activate your virtual environment and navigate to the project root directory, `trump-market-analysis/`. 
 
 ### Executing all tests
 Run:
 ```
-python -m pytest
+pytest 
 ```
 Expected output:
 ```
@@ -255,13 +265,13 @@ tests\test_nlp.py ........                                                      
 ### Executing specific test suites
 For example, run: 
 ```
-python -m pytest tests/test_nlp.py
+pytest tests/test_nlp.py
 ```
 
 ### Executing specific unit tests
 For example, run: 
 ```
-python -m pytest tests/test_nlp.py::test_sia
+pytest tests/test_nlp.py::test_classify_topic_china
 ```
 
 # Project Structure
@@ -286,18 +296,19 @@ trump-market-analysis/
 ├── README.md                       # This file: Overview and analysis
 │
 ├── src/
+│   ├── .env.example                # Example of .env file that stores API key and database details
 │   ├── scripts/
 │   │   └── download_data.sh        # Downloads all required market data
 │   │
 │   ├── python/
 │   │   ├── requirements.txt        # Required python packages for testing of project by GitHub Actions
+│   │   ├── print_latest_signals.py  # Generates trading signals without analysis
 │   │   ├── scrape_posts.py         # Scrapes Trump's posts
 │   │   ├── download_market_data.py # Configures downloading of market data
 │   │   ├── nlp.py                  # Generates sentiment scores via NLP and classifies topics of posts
 │   │   ├── model_training.ipynb    # Visualizes predictive model's performance and feature importances
 │   │   ├── backtest_analysis.ipynb # Visualizes strategy performance during backtesting
-│   │   ├── db_mananger.py          # Connection details and functions for interacting with the database
-│   │   └── print_lattest_signals.py  # Generates trading signals without analysis. Run for quick start.
+│   │   └── db_mananger.py          # Connection details and functions for interacting with the database
 │   │
 │   └── cpp/
 │       ├── compile.bat             # Compiles all C++ programs
@@ -305,6 +316,7 @@ trump-market-analysis/
 │       └── backtester.cpp          # Configures backtesting of trading strategy
 │    
 ├── results/
+│   ├── print-latest-signals-screenshot.png # Example of output from print_latest_signals.py
 │   ├── ml-results/
 │   │   ├── returns_RMSE.png                # RMSE of return predictions by the regression models
 │   │   ├── vol_RMSE.png                    # RMSE of volatility predictions by the regression models
@@ -323,9 +335,9 @@ trump-market-analysis/
 │   └── test_nlp.py     # Tests accuracy of sentiment scoring and topic classification in nlp.py
 │    
 ├── .github/workflows/
-│   └── ci.yaml         # Automates testing and compilation of project in GitHub on every push or pull request
+│   └── ci.yaml  # Automates testing and compilation of project on every push or pull GitHub request
 │
-└── .gitignore          # Folders or files GitHub ignores when tracking changes
+└── .gitignore   # Folders or files GitHub ignores when tracking changes
 ```
 
 # Future Work
