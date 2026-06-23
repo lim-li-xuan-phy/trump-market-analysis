@@ -7,7 +7,7 @@ from nlp import classify_topic, get_sentiment
 def sia():
     return SentimentIntensityAnalyzer()
 
-# Ensure VADER lexicon is present.
+# Ensure NLP VADER lexicon is present.
 try:
     nltk.data.find('sentiment/vader_lexicon.zip')
 except LookupError:
