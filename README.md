@@ -355,6 +355,6 @@ git push origin feature/amazing-feature
 # Acknowledgements
 - Donald Trump for inspiring this project.
 - Financial data provided by Massive API.
-- Trump's social media posts provided by the American Presidency Project archive.
+- Trump's social media posts provided by CNN.
 - Project was developed using pandas, scikit-learn, and seaborn.
 - Boilerplate code generation was AI-assisted by Google Antigravity.
