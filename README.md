@@ -2,16 +2,19 @@
 In this project, a quantitative analysis of market reactions to Trump's social media events reveals that market performance is significantly correlated with the sentiment score of Trump's posts. Hence, a trading strategy is developed to execute trades based on the sentiment scores in Trump's posts. The results of our backtests support the profitability of our trading strategy.
 
 # Table of Contents
-- 📗[Data Source](#data-source)
-- 🫕[Method](#method)
-- 📈[Results](#results)
-- 💻[Reproduce the analysis](#reproduce-the-analysis) 
-- 📁[Project structure](#project-structure)
-- 🔮[Future work](#future-work)
-- 🏅[Acknowledgements](#acknowledgements)
+- 📗 [Data Source](#data-source)
+- 🫕 [Method](#method)
+- 📈 [Results](#results)
+- ⏩ [Quick Start](#-quick-start)
+- 🔎 [Reproduce the Analysis](#-reproduce-the-analysis) 
+- 🧪 [Tests](#tests)
+- 📁 [Project Structure](#project-structure)
+- 🔮 [Future Work](#future-work)
+- 🌱 [How To Contribute?](#how-to-contribute)
+- 🏅 [Acknowledgements](#acknowledgements)
 
 # Data Source
-**Social media text posts** by Donald Trump (@realDonaldTrump) on Truth Social during his second term were obtained from the [American Presidency Project archive](https://www.presidency.ucsb.edu/). The timeframe of the posts range from 1 Dec 2024 to present. 
+**Social media text posts** by Donald Trump (@realDonaldTrump) on Truth Social during his second term were obtained from the [CNN archive](https://ix.cnn.io/data/truth-social/truth_archive.json). The timeframe of the posts used in this project range from 1 Dec 2024 to present. 
 
 **Financial data** obtained from [Massive API](https://massive.com/). Open, High, Low, Close, and Volume (OHLCV) values at frequencies of 1-min and 1-day were recorded. 15-min, 30-min, and 1-hr data were intrapolated from the 1-min data. The assets on which we focused our analysis were:
 
@@ -28,7 +31,9 @@ In this project, a quantitative analysis of market reactions to Trump's social m
 - YM: E-mini Dow Jones Industrial Average
 
 # Method
-**Beta:** ES was used as the benchmark. 
+**Data storage:** Social media posts and market data are saved into and read from a single location, a PostgreSQL database named `trump_market_analysis`. 
+
+**Beta:** Measures an asset's volatility relative to the entire market. ES was used as the benchmark index for beta calculation. 
 
 **Topic classification of posts:** Six topics that are likely to impact the market were found manually: "China", "Federal politics", "Iran war/Oil", "National security/Immigration", "Tariffs", and "Technology". Topics are inspired by [the White House priorities](https://www.whitehouse.gov/priorities/) and mainstream news coverage of the 2nd Trump presidency. Non-text posts and posts which were deemed to have negligible effect on the market were classified as "Miscellaneous". Posts were classified into their respective topics by the presence of keywords within the post. These keywords were manually chosen. 
 
@@ -106,12 +111,17 @@ The equity growth of the 5 configurations with the highest Sharpe ratio over the
 
 *YM China (1d)* is the only equity curve out of the five that consistently and steadily rises. This suggests that the risk on this trading strategy is well-controlled for various market regimes.👍
 
-# Reproduce the analysis
+# ⏩ Quick Start 
 ### Prerequisites:
-- Python
-- pip package manager
+- **Python 3.10+** and `pip`
+- **PostgreSQL Server** (eg. PostgreSQL 15+) to host the database.
+- **C++17 Compiler** (eg. `g++`)
+- `libpq` **(PostgreSQL Client Library)** for C++ files to interact with the database:
+  - On **Windows**, it is included with PostgreSQL installation.
+  - On **Linux (Ubuntu/Debian)**, install via `sudo apt-get install libpq-dev`.
 
 ### Instructions:
+If you would like to **directly obtain the trading signals** of Trump's latest posts without studying the feature importances, predictive accuracies, and backtesting of our trading strategy, you can do so by following the instructions below.
 1. Open a terminal.
 
 2. Clone the git repository.
@@ -119,21 +129,37 @@ The equity growth of the 5 configurations with the highest Sharpe ratio over the
 git clone https://github.com/lim-li-xuan-phy/trump-market-analysis.git
 ```
 
-**Data collection**
-
-3. Navigate to the downloaded repository.
+3. Navigate to the `src/` folder.
 ```
-cd trump-market-analysis
+cd trump-market-analysis/src
 ```
 
-4. Create an account on Massive.com and get your API key. Open `download_market_data.py` in a text editor and set `MASSIVE_API_KEY` to your key.
+4. Rename `.env.example` file to `.env`. 
+```
+# Windows
+ren .env.example .env
+# MacOS/Linux
+mv .env.example .env
+```
 
-5. Create virtual environment.
+5. Open the newly renamed `.env` file.
+```
+# Windows
+start .env
+# MacOS
+open .env
+#Linux
+xdg-open .env
+```
+
+6. Create an account on Massive.com and get your API key. In the opened `.env` file, set `MASSIVE_API_KEY` to your key, and `DB_USER` and `DB_PASSWORD` to the username and password of your chosen database.
+
+7. Create virtual environment.
 ```
 python -m venv venv
 ```
 
-6. Activate virtual environment
+8. Activate virtual environment. 
 ```
 # Windows
 venv\Scripts\activate
@@ -141,18 +167,37 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-7. Install dependencies
+9. Navigate to the `python/` folder and install dependencies. 
 ```
-pip install -r Deployment/requirements.txt
-cd src/python
+cd python
+pip install -r requirements.txt
 ```
 
-8. Scrape all of Trump's Truth Social text posts from the archive and saved into the file `trump_posts.py`.
+To reproduce the plots and tables described in [Results](#results), follow the rest of the steps in [Reproduce the Analysis](#reproduce-the-analysis). 
+
+To do a ⏩ Quick start, run:
+```
+python print_latest_signals.py
+```
+A table of the trading signals of the latest 5 posts will be generated.
+
+![Screenshot](results/print-latest-signals-screenshot.png)
+
+
+# 🔎 Reproduce the Analysis
+*Note: The results presented in [Results](#results) were based on data retrieved on 3 June 2026. Your results may appear different.*
+
+Go through the steps in Quick start before continuing with the rest of the steps in this section.
+
+
+**Data collection**
+
+10. Scrape all of Trump's Truth Social text posts from the archive and saved into the file `trump_posts.py`.
 ```
 python scrape_posts.py
 ```
 
-9. Download the financial data corresponding to the time range of the posts. If your Massive account is on the free tier, it will take approximately 1 day to download all available financial data.
+11. Download the financial data corresponding to the time range of the posts. If your Massive account is on the free tier, it will take approximately 1 day to download all available financial data.
 ```
 python download_market_data.py
 ```
@@ -160,100 +205,168 @@ You have downloaded all the raw data to be used in your analysis. Next, we proce
 
 **Event study**
 
-10. Navigate to the folder containing the C++ programs.
+12. Navigate to the folder containing the C++ programs.
 ```
 cd ../cpp
 ```
-11. Compile all C++ programs. This will create an EXE file of each C++ program.
+13. Compile all C++ programs. This will create an EXE file of each C++ program.
 ```
 .\compile.bat
 cd ../../
 ```
-12. Run `event_study_engine.exe`. The file `event_study_results.csv` containing the returns and volatility at various frequencies will be created in `data/` folder.
+14. Run `event_study_engine.exe`. The file `event_study_results.csv` containing the returns and volatility at various frequencies will be created in `data/` folder.
 ```
-# Test mode
-.\src\cpp\event_study_engine.exe --test
-# Release mode
 .\src\cpp\event_study_engine.exe
 ```
 
-**Sentiment scoring**
+**Sentiment scoring and topic classification**
 
-13. Compute the sentiment scores of Trump's posts using the NLP model and classify each post into preset topics. The data will be saved into the file `trump_posts_nlp.csv`.
+15. Compute the sentiment scores of Trump's posts using the NLP model and classify each post into preset topics. The data will be saved into the file `trump_posts_nlp.csv`.
 ```
-cd ../python
+cd src/python
 python nlp.py
 ```
 **Predictive models**
 
 These instructions will guide you to generate the predictive accuracy and feature importance visualizations presented in [Results](#-results). 
 
-14. On your file explorer, open the file `src/python/model_training.ipynb`. 
-15. Run the code cells one-by-one to train and evaluate random forest models for predicting next returns, volatility and beta values, and the next direction of returns. 
+16. On your file explorer, open the file `src/python/model_training.ipynb` with a code editor. 
+17. Run the code cells one-by-one to train and evaluate random forest models for predicting next returns, volatility and beta values, and the next direction of returns. 
 
 **Backtesting of trading strategy**
 
 These instructions will guide you to generate the backtesting plots presented in [Results](#-results).
 
-16. On your file explorer, open the file `src/python/backtest_analysis.ipynb`.
-17. Run the code cells one-by-one to run the file `src\cpp\backtester.exe` you had earlier compiled from its C++ program on "good" configurations of topic | asset | interval. 
+18. On your file explorer, open the file `src/python/backtest_analysis.ipynb` with a code editor.
+19. Run the code cells one-by-one to run the file `src\cpp\backtester.exe` you had earlier compiled from its C++ program on "good" configurations of topic | asset | interval. 
 
 That completes our analysis! (ﾉ^ヮ^)ﾉ*:・ﾟ✧
 
-# Project structure
+# Tests
+There are tests in this project to ensure various features are functioning as expected. They are useful if you are modifying any part of the code. To execute the tests of your choice, follow the below instructions.
+
+On a terminal, activate your virtual environment and navigate to the project root directory, `trump-market-analysis/`. 
+
+### Executing all tests
+Run:
+```
+pytest 
+```
+Expected output:
+```
+configfile: pytest.ini
+plugins: anyio-4.7.0
+collected 10 items
+
+tests\test_db.py ..                                                                                              [ 20%]
+tests\test_nlp.py ........                                                                                       [100%]
+```
+
+### Executing specific test suites
+For example, run: 
+```
+pytest tests/test_nlp.py
+```
+
+### Executing specific unit tests
+For example, run: 
+```
+pytest tests/test_nlp.py::test_classify_topic_china
+```
+
+# Project Structure
+PostgreSQL database:
+```
+trump_market_analysis
+│
+├── trump_posts               # Trump's post times and messages
+├── market_data_download_log  # Log of market data already existing in database
+├── market_data_1min          # Market data recorded in 1-min intervals
+├── market_data_1day          # Market data recorded in 1-day intervals
+├── futures_contract_cache    # Matches front-month futures contracts to posts
+├── event_study_results       # Matches market data to posts
+├── final_dataset             # Features data used in predictive models
+└── backtest_trades           # Backtesting metrics of every post
+```
+
+GitHub files:
 ```
 trump-market-analysis/
 │
-├── README.md        # This file: Overview and analysis
-│
-├── data/
-│   ├── trump_posts.csv                 # Trump's post times and messages
-│   ├── trump_posts_nlp.csv             # Sentiment scores and topics
-│   ├── event_study_results.csv         # Matches market data to posts
-│   ├── final_dataset.csv               # Features data used in predictive models
-│   └── market/
-│       ├── futures_contract_cache.csv  # Matches front-month futures contracts to posts
-│       ├── minute/                     # Market data recorded in 1-min intervals
-│       └── daily/                      # Market data recorded in 1-day intervals
+├── README.md                       # This file: Overview and analysis
 │
 ├── src/
+│   ├── .env.example                # Example of .env file that stores API key and database details
 │   ├── scripts/
-│   │   └── download_data.sh            # Downloads all required market data
+│   │   └── download_data.sh        # Downloads all required market data
 │   │
 │   ├── python/
-│   │   ├── scrape_posts.py             # Scrapes Trump's posts
-│   │   ├── download_market_data.py     # Configures downloading of market data
-│   │   ├── nlp.py                      # Generates sentiment scores via NLP and classifies topics of posts
-│   │   ├── model_training.ipynb        # Visualizes predictive model's performance and feature importances
-│   │   └── backtest_analysis.ipynb     # Visualizes strategy performance during backtesting
+│   │   ├── requirements.txt        # Required python packages for testing of project by GitHub Actions
+│   │   ├── print_latest_signals.py  # Generates trading signals without analysis
+│   │   ├── scrape_posts.py         # Scrapes Trump's posts
+│   │   ├── download_market_data.py # Configures downloading of market data
+│   │   ├── nlp.py                  # Generates sentiment scores via NLP and classifies topics of posts
+│   │   ├── model_training.ipynb    # Visualizes predictive model's performance and feature importances
+│   │   ├── backtest_analysis.ipynb # Visualizes strategy performance during backtesting
+│   │   └── db_mananger.py          # Connection details and functions for interacting with the database
 │   │
 │   └── cpp/
-│       ├── compile.bat                 # Compiles all C++ programs
-│       ├── event_study_engine.cpp      # Generates event study results
-│       └── backtester.cpp              # Configures backtesting of trading strategy
+│       ├── compile.bat             # Compiles all C++ programs
+│       ├── event_study_engine.cpp  # Generates event study results
+│       └── backtester.cpp          # Configures backtesting of trading strategy
 │    
-└── results/
-    ├── ml-results/
-    │   ├── returns_RMSE.png                # RMSE of return predictions by the regression models
-    │   ├── vol_RMSE.png                    # RMSE of volatility predictions by the regression models
-    │   ├── regression_fi.png               # Feature importances of regression models
-    │   ├── classification_performance.png  # Performance metrics of classification models
-    │   └── classification_fi.png           # Feature importances of classification models
-    │
-    └──backtesting-results/  
-        ├── backtest_performance_summary.png  # Performance metrics of trading strategy during backtesting
-        └── equity_curves.png                 # Equity curves of top 5 trading strategies
+├── results/
+│   ├── print-latest-signals-screenshot.png # Example of output from print_latest_signals.py
+│   ├── ml-results/
+│   │   ├── returns_RMSE.png                # RMSE of return predictions by the regression models
+│   │   ├── vol_RMSE.png                    # RMSE of volatility predictions by the regression models
+│   │   ├── regression_fi.png               # Feature importances of regression models
+│   │   ├── classification_performance.png  # Performance metrics of classification models
+│   │   └── classification_fi.png           # Feature importances of classification models
+│   │
+│   └──backtesting-results/  
+│       ├── backtest_performance_summary.png  # Performance metrics of trading strategy during backtesting
+│       └── equity_curves.png                 # Equity curves of top 5 trading strategies
+│
+├── pytest.ini          # pytest configurations
+│    
+├── tests/
+│   ├── test_db.py      # Test whether the expected PostgreSQL database and tables are available
+│   └── test_nlp.py     # Tests accuracy of sentiment scoring and topic classification in nlp.py
+│    
+├── .github/workflows/
+│   └── ci.yaml  # Automates testing and compilation of project on every push or pull GitHub request
+│
+└── .gitignore   # Folders or files GitHub ignores when tracking changes
 ```
 
-# Future work
+# Future Work
 - ✨ **Investigate why some profitable trading strategies fell or flattened:** Possible reasons are abnormal market conditions (eg. a change in volatility), strategy decay, or innate flaws of the strategy.
 - ✨ **Extend application of project to HFT:** Download market data using C++.
 - ✨ **Overcome sensitivity of MDI to variance:** Further measurement of feature importance with Mean Decrease Accuracy and Shapley values.
 - ✨ **Automatic trade execution:** Enable trades to be executed algorithmically by a Bash program that executes the whole pipeline of sentiment scoring and topic classification followed by trade execution.
 
+# How To Contribute?
+Contributions are welcome! Here is how you can make one:
+1. Fork the repository
+2. Create a feature branch
+```
+git checkout -b feature/amazing-feature
+```
+3. Commit changes
+```
+git commit -m 'Add amazing feature'
+```
+4. Push to branch.
+```
+git push origin feature/amazing-feature
+```
+5. Open a Pull request. 
+
+
 # Acknowledgements
 - Donald Trump for inspiring this project.
 - Financial data provided by Massive API.
-- Trump's social media posts provided by the American Presidency Project archive.
+- Trump's social media posts provided by CNN.
 - Project was developed using pandas, scikit-learn, and seaborn.
 - Boilerplate code generation was AI-assisted by Google Antigravity.

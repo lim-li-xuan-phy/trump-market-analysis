@@ -1,11 +1,15 @@
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <libpq-fe.h>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -34,23 +38,19 @@ struct TrumpPost {
 // Convert parsed timestamp to seconds since Unix Epoch.
 long long timestamp_to_s(int year, int month, int day, int hour, int min,
                          int sec) {
-  // Array of no. of days in each month of a non-leap year
   static const int days_in_month[] = {31, 28, 31, 30, 31, 30,
                                       31, 31, 30, 31, 30, 31};
 
-  // Count leap years since 1970
   int leap_days = 0;
   for (int y = 1970; y < year; ++y) {
-    if ((y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)) { // y is a leap year
+    if ((y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)) {
       leap_days++;
     }
   }
 
-  // Count no. of days since the start of `year`
   long long days = (year - 1970) * 365 + leap_days;
   for (int m = 0; m < month - 1; ++m) {
-    if (m == 1 && ((year % 4 == 0 && year % 100 != 0) ||
-                   (year % 400 == 0))) { // m is a leap-year February
+    if (m == 1 && ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0))) {
       days += 29;
     } else {
       days += days_in_month[m];
@@ -63,9 +63,7 @@ long long timestamp_to_s(int year, int month, int day, int hour, int min,
 
 // Converts "YYYY-MM-DD HH:MM:SS" to milliseconds since Unix Epoch
 long long utc_to_ms(const std::string &ts_str) {
-  int year, month, day,
-      hour = 0, min = 0,
-      sec = 0; // if time is missing from ts_str, time defaults to 00:00:00
+  int year, month, day, hour = 0, min = 0, sec = 0;
   if (sscanf(ts_str.c_str(), "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour,
              &min, &sec) < 3) {
     return -1;
@@ -73,190 +71,180 @@ long long utc_to_ms(const std::string &ts_str) {
   return timestamp_to_s(year, month, day, hour, min, sec) * 1000LL;
 }
 
-// Parses commas and multi-line fields in quotes on the CSV according to
-// RFC-4180
-std::vector<std::vector<std::string>> parse_csv(const std::string &filepath) {
-  std::ifstream file(filepath, std::ios::binary);
-  std::vector<std::vector<std::string>> records;
+std::unordered_map<std::string, std::string> load_env_file() {
+  std::unordered_map<std::string, std::string> env;
+  std::ifstream file("src/.env");
   if (!file.is_open()) {
-    return records; // returns empty structure
+    return env;
   }
+  std::string line;
+  while (std::getline(file, line)) {
+    // Remove comments
+    size_t comment_pos = line.find('#');
+    if (comment_pos != std::string::npos) {
+      line = line.substr(0, comment_pos);
+    }
 
-  std::vector<std::string> current_record;
-  std::string current_field;
-  char c;
-  bool inside_quotes = false;
+    // Find key=value
+    size_t eq_pos = line.find('=');
+    if (eq_pos == std::string::npos) {
+      continue;
+    }
+    std::string key = line.substr(0, eq_pos);
+    std::string value = line.substr(eq_pos + 1);
 
-  while (file.get(c)) {
-    if (c == '"') {
-      if (inside_quotes && file.peek() == '"') {
-        current_field += '"';
-        file.get(); // consume the peeked quotation mark
+    // Helper to trim spaces and quotes
+    auto trim_str = [](std::string &s) {
+      s.erase(0, s.find_first_not_of(" \t\r\n\"'"));
+      size_t last = s.find_last_not_of(" \t\r\n\"'");
+      if (last != std::string::npos) {
+        s.erase(last + 1);
       } else {
-        inside_quotes = !inside_quotes;
+        s.clear();
       }
-    } else if (c == ',' && !inside_quotes) {
-      current_record.push_back(current_field);
-      current_field.clear();
-    } else if ((c == '\n' || c == '\r') && !inside_quotes) {
-      if (c == '\r' && file.peek() == '\n') {
-        file.get(); // consume \n
-      }
-      current_record.push_back(current_field);
-      records.push_back(current_record);
-      current_record.clear();
-      current_field.clear();
-    } else {
-      current_field += c;
+    };
+    trim_str(key);
+    trim_str(value);
+    if (!key.empty()) {
+      env[key] = value;
     }
   }
-  if (!current_field.empty() || !current_record.empty()) {
-    current_record.push_back(current_field);
-    records.push_back(current_record);
-  }
-  return records;
+  return env;
 }
 
-// Finds a column index in the header row, by the column name
-int find_col(const std::vector<std::string> &header, const std::string &name) {
-  for (size_t i = 0; i < header.size(); ++i) {
-    // Strip carriage returns or whitespace if any
-    std::string h = header[i];
-    h.erase(std::remove(h.begin(), h.end(), '\r'), h.end());
-    h.erase(std::remove(h.begin(), h.end(), '\n'), h.end());
-    if (h == name)
-      return i;
+PGconn *connect_db() {
+  std::unordered_map<std::string, std::string> env = load_env_file();
+  if (env.empty()) {
+    std::cerr << "Error: Could not open src/.env file.\n";
+    return nullptr;
   }
-  return -1;
+
+  std::string host = env["DB_HOST"];
+  std::string port = env["DB_PORT"];
+  std::string dbname = env["DB_NAME"];
+  std::string user = env["DB_USER"];
+  std::string password = env["DB_PASSWORD"];
+
+  std::vector<std::string> parts;
+  if (!host.empty())
+    parts.push_back("host=" + host);
+  if (!port.empty())
+    parts.push_back("port=" + port);
+  if (!dbname.empty())
+    parts.push_back("dbname=" + dbname);
+  if (!user.empty())
+    parts.push_back("user=" + user);
+  if (!password.empty())
+    parts.push_back("password=" + password);
+
+  if (parts.empty()) {
+    std::cerr
+        << "Error: No database connection details found in src/.env file.\n";
+    return nullptr;
+  }
+
+  std::ostringstream oss;
+  for (size_t i = 0; i < parts.size(); ++i) {
+    // Join parts into single string with space between parts
+    oss << parts[i] << (i + 1 < parts.size() ? " " : "");
+  }
+  std::string conninfo = oss.str();
+
+  PGconn *conn = PQconnectdb(conninfo.c_str());
+  if (PQstatus(conn) != CONNECTION_OK) {
+    std::cerr << "Connection to database failed: " << PQerrorMessage(conn)
+              << std::endl;
+    PQfinish(conn);
+    return nullptr;
+  }
+  return conn;
 }
 
-// Get a sorted list of the dates that have CSV files in the minute/<asset>/
-// folder
-std::vector<std::string> get_sorted_dates(const std::string &asset_dir) {
-  std::vector<std::string> dates;
-  if (!fs::exists(asset_dir))
-    return dates;
-  for (const auto &entry : fs::directory_iterator(asset_dir)) {
-    if (entry.path().extension() == ".csv") {
-      std::string filename = entry.path().stem().string();
-      // Expected filename format: YYYY-MM-DD
-      if (filename.size() == 10 && filename[4] == '-' && filename[7] == '-') {
-        dates.push_back(filename);
-      }
-    }
-  }
-  std::sort(dates.begin(), dates.end()); // Sort dates from earliest to latest
-  return dates;
-}
-
-// Load minute bars from a given CSV file
-std::vector<MinuteBar> load_csv_bars(const std::string &filepath) {
-  std::vector<MinuteBar> bars;
-  auto records = parse_csv(filepath);
-  if (records.empty())
-    return bars;
-
-  auto header = records[0];
-  int ts_idx = find_col(header, "timestamp_ms");
-  int open_idx = find_col(header, "open");
-  int high_idx = find_col(header, "high");
-  int low_idx = find_col(header, "low");
-  int close_idx = find_col(header, "close");
-  int vol_idx = find_col(header, "volume");
-
-  if (ts_idx == -1 || open_idx == -1 || close_idx == -1) {
-    return bars;
-  }
-
-  for (size_t i = 1; i < records.size(); ++i) {
-    const auto &row = records[i];
-    if (row.size() <= std::max({ts_idx, open_idx, close_idx}))
-      continue;
-
-    try {
-      MinuteBar bar;
-      bar.timestamp_ms = std::stoll(row[ts_idx]);
-      bar.open = std::stod(row[open_idx]);
-      bar.high = (high_idx != -1 && row.size() > (size_t)high_idx)
-                     ? std::stod(row[high_idx])
-                     : bar.open;
-      bar.low = (low_idx != -1 && row.size() > (size_t)low_idx)
-                    ? std::stod(row[low_idx])
-                    : bar.open;
-      bar.close = std::stod(row[close_idx]);
-      bar.volume = (vol_idx != -1 && row.size() > (size_t)vol_idx)
-                       ? std::stod(row[vol_idx])
-                       : 0.0;
-      bars.push_back(bar);
-    } catch (...) {
-      // Skip malformed rows
-      continue;
-    }
-  }
-  return bars;
-}
-
-// Load the asset's data for `post_date` and the next 2 available trading
-// dates to handle weekends/holidays
 std::vector<MinuteBar>
-load_asset_data(const std::string &asset_dir,
-                const std::vector<std::string> &sorted_dates,
-                const std::string &post_date) {
+load_asset_data_from_db(PGconn *conn, const std::string &asset,
+                        const std::string &post_timestamp_utc) {
   std::vector<MinuteBar> bars;
 
-  // Find the first date in sorted_dates that is later than or the same as
-  // post_date
-  auto it =
-      std::lower_bound(sorted_dates.begin(), sorted_dates.end(), post_date);
-  if (it == sorted_dates.end()) {
-    // No trading days found later than or the same as post_date
+  std::string date_query = "SELECT DISTINCT DATE(timestamp_utc) AS d "
+                           "FROM market_data_1min "
+                           "WHERE ticker = '" +
+                           asset + "' AND timestamp_utc >= '" +
+                           post_timestamp_utc +
+                           "' "
+                           "ORDER BY d LIMIT 3;";
+
+  PGresult *res_dates = PQexec(conn, date_query.c_str());
+  if (PQresultStatus(res_dates) != PGRES_TUPLES_OK) {
+    std::cerr << "Query failed: " << PQerrorMessage(conn) << std::endl;
+    PQclear(res_dates);
     return bars;
   }
 
-  // Get the data from the relevant CSV files
-  size_t count = 0;
-  while (it != sorted_dates.end() && count < 3) {
-    std::string filepath = asset_dir + "/" + *it + ".csv";
-    auto day_bars = load_csv_bars(filepath); // All 1-min bars of a chosen date
-    // Insert `day_bars` to the end of `bars`
-    bars.insert(bars.end(), day_bars.begin(), day_bars.end());
-    it++;
-    count++;
+  int num_dates = PQntuples(res_dates);
+  if (num_dates == 0) {
+    PQclear(res_dates);
+    return bars;
   }
 
-  // Sort and remove duplicates (just in case)
-  std::sort(bars.begin(), bars.end(),
-            [](const MinuteBar &a, const MinuteBar &b) {
-              return a.timestamp_ms < b.timestamp_ms;
-            });
+  std::string min_date = PQgetvalue(res_dates, 0, 0);
+  std::string max_date = PQgetvalue(res_dates, num_dates - 1, 0);
+  PQclear(res_dates);
 
+  std::string bars_query =
+      "SELECT timestamp_ms, open, high, low, close, volume "
+      "FROM market_data_1min "
+      "WHERE ticker = '" +
+      asset +
+      "' AND "
+      "timestamp_utc >= '" +
+      min_date +
+      " 00:00:00' AND "
+      "timestamp_utc <= '" +
+      max_date +
+      " 23:59:59' "
+      "ORDER BY timestamp_utc;";
+
+  PGresult *res_bars = PQexec(conn, bars_query.c_str());
+  if (PQresultStatus(res_bars) != PGRES_TUPLES_OK) {
+    std::cerr << "Query failed: " << PQerrorMessage(conn) << std::endl;
+    PQclear(res_bars);
+    return bars;
+  }
+
+  int num_bars = PQntuples(res_bars);
+  for (int i = 0; i < num_bars; ++i) {
+    MinuteBar bar;
+    bar.timestamp_ms = std::stoll(PQgetvalue(res_bars, i, 0));
+    bar.open = std::stod(PQgetvalue(res_bars, i, 1));
+    bar.high = std::stod(PQgetvalue(res_bars, i, 2));
+    bar.low = std::stod(PQgetvalue(res_bars, i, 3));
+    bar.close = std::stod(PQgetvalue(res_bars, i, 4));
+    bar.volume = std::stod(PQgetvalue(res_bars, i, 5));
+    bars.push_back(bar);
+  }
+
+  PQclear(res_bars);
   return bars;
 }
 
-// Find the closest price to a target timestamp. Can be before or after the
-// target.
+// Find the closest price to a target timestamp.
 double find_price_at(const std::vector<MinuteBar> &bars, long long target_ms,
                      long long tolerance_ms, size_t &found_idx) {
   auto it = std::lower_bound(bars.begin(), bars.end(), target_ms,
                              [](const MinuteBar &bar, long long val) {
-                               // A MinuteBar is considered "less than" the
-                               // search value if its timestamp is smaller
-                               // than the target timestamp
                                return bar.timestamp_ms < val;
                              });
 
-  if (it == bars.end()) { // all bars in `bars` are earlier than `target_ms`
+  if (it == bars.end()) {
     if (!bars.empty()) {
-      auto last_it = std::prev(bars.end()); // the latest bar in `bars`
+      auto last_it = std::prev(bars.end());
       long long diff = std::abs(last_it->timestamp_ms - target_ms);
-      if (diff <=
-          tolerance_ms) { // latest bar is within `tolerance_ms` of `target_ms`
-        found_idx =
-            std::distance(bars.begin(), last_it); // index of the latest bar
-        return last_it->close;                    // close price of latest bar
+      if (diff <= tolerance_ms) {
+        found_idx = std::distance(bars.begin(), last_it);
+        return last_it->close;
       }
     }
-    return -1.0; // No suitable price found
+    return -1.0;
   }
 
   long long diff = std::abs(it->timestamp_ms - target_ms);
@@ -278,12 +266,10 @@ double find_price_at(const std::vector<MinuteBar> &bars, long long target_ms,
     found_idx = best_idx;
     return best_price;
   }
-  return -1.0; // No suitable bars found
+  return -1.0;
 }
 
-// Calculate volatility of a stock's returns over a given time window.
-// Volatility = standard deviation of 1-minute returns / sqrt(number of 1-minute
-// periods in the window)
+// Calculate volatility
 double compute_volatility(const std::vector<MinuteBar> &bars, size_t start_idx,
                           size_t end_idx) {
   if (end_idx <= start_idx || end_idx >= bars.size())
@@ -315,45 +301,49 @@ double compute_volatility(const std::vector<MinuteBar> &bars, size_t start_idx,
   return std_dev / std::sqrt(returns.size());
 }
 
-// Calculate Beta of a given asset relative to market benchmark.
-// Time window of the asset and the benchmark must be the same for beta
-// calculation.
-double compute_beta(const std::vector<MinuteBar> &asset_bars,
-                    size_t asset_start_idx, size_t asset_end_idx,
-                    const std::vector<MinuteBar> &bench_bars) {
+std::string escape_sql_string(const std::string &str) {
+  std::string result;
+  for (char c : str) {
+    if (c == '\'') {
+      result += "''";
+    } else {
+      result += c;
+    }
+  }
+  return result;
+}
+
+// Calculate Beta
+std::optional<double> compute_beta(const std::vector<MinuteBar> &asset_bars,
+                                   size_t asset_start_idx, size_t asset_end_idx,
+                                   const std::vector<MinuteBar> &bench_bars) {
   if (asset_end_idx <= asset_start_idx || asset_end_idx >= asset_bars.size())
-    return -99.0;
+    return std::nullopt;
 
   long long t_start = asset_bars[asset_start_idx].timestamp_ms;
   long long t_end = asset_bars[asset_end_idx].timestamp_ms;
 
-  // The first benchmark bar that is >= t_start
   auto bench_start_it =
       std::lower_bound(bench_bars.begin(), bench_bars.end(), t_start,
                        [](const MinuteBar &bar, long long val) {
                          return bar.timestamp_ms < val;
                        });
-  // The last benchmark bar that is <= t_end
   auto bench_end_it =
       std::lower_bound(bench_bars.begin(), bench_bars.end(), t_end,
                        [](const MinuteBar &bar, long long val) {
                          return bar.timestamp_ms < val;
                        });
 
-  // Error if benchmark data starts after asset data
   if (bench_start_it == bench_bars.end())
-    return -99.0;
+    return std::nullopt;
 
-  // Create map of timestamp -> close for asset bars in the time window
   std::unordered_map<long long, double> asset_closes;
   for (size_t i = asset_start_idx; i <= asset_end_idx; ++i) {
     asset_closes[asset_bars[i].timestamp_ms] = asset_bars[i].close;
   }
 
-  std::vector<std::pair<double, double>>
-      aligned_returns; // (asset_return, bench_return)
+  std::vector<std::pair<double, double>> aligned_returns;
 
-  // Iterate through all benchmark bars within the time window
   for (auto it = bench_start_it; it != bench_end_it && it != bench_bars.end();
        ++it) {
     if (it == bench_bars.begin())
@@ -363,17 +353,12 @@ double compute_beta(const std::vector<MinuteBar> &asset_bars,
     long long t_curr = it->timestamp_ms;
     long long t_prev = prev_it->timestamp_ms;
 
-    // Ensure consecutive minute bars (max 65 seconds gap)
     if (t_curr - t_prev > 65000)
       continue;
 
-    // If the current and previous timestamps from the benchmark data are
-    // present in the asset data, add the corresponding asset and benchmark
-    // returns to `aligned_returns`
     if (asset_closes.count(t_curr) && asset_closes.count(t_prev)) {
       double prev_asset_price = asset_closes[t_prev];
       double prev_bench_price = prev_it->close;
-      // Ensure we don't divide by zero
       if (prev_asset_price > 0.0 && prev_bench_price > 0.0) {
         double asset_ret =
             (asset_closes[t_curr] - prev_asset_price) / prev_asset_price;
@@ -384,7 +369,7 @@ double compute_beta(const std::vector<MinuteBar> &asset_bars,
   }
 
   if (aligned_returns.size() < 2)
-    return -99.0; // Not enough overlapping bars to calculate beta
+    return std::nullopt;
 
   double sum_asset = 0.0, sum_bench = 0.0;
   for (const auto &p : aligned_returns) {
@@ -401,160 +386,90 @@ double compute_beta(const std::vector<MinuteBar> &asset_bars,
     var_bench += (p.second - mean_bench) * (p.second - mean_bench);
   }
 
-  if (var_bench == 0.0)
-    return 0.0;
+  double variance_bench = var_bench / (aligned_returns.size() - 1);
+  if (variance_bench < 1e-8 || std::isnan(variance_bench) || std::isnan(cov))
+    return std::nullopt;
   return cov / var_bench;
 }
 
 int main(int argc, char *argv[]) {
-  // argc: number of argument strings in the command, including program name.
-  // argv: an array of pointers to each argument string in the command.
-  std::string data_dir = "data";
-  std::string output_path = "data/event_study_results.csv";
   std::string benchmark_asset = "ES";
-  bool test_mode = false;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg == "--data-dir" && i + 1 < argc) {
-      data_dir = argv[++i];
-    } else if (arg == "--output" && i + 1 < argc) {
-      output_path = argv[++i];
-    } else if (arg == "--benchmark" && i + 1 < argc) {
+    if (arg == "--benchmark" && i + 1 < argc) {
       benchmark_asset = argv[++i];
-    } else if (arg == "--test") {
-      test_mode = true;
     } else if (arg == "--help" || arg == "-h") {
-      std::cout
-          << "Usage: event_engine.exe [options]\n"
-          << "Options:\n"
-          << "  --data-dir <path>     Path to data directory (default: data)\n"
-          << "  --output <path>       Path to output CSV (default: "
-             "data/event_study_results.csv)\n"
-          << "  --benchmark <asset>   Market benchmark asset name (default: "
-             "ES)\n"
-          << "  --test                Run in test mode (limits to first 50 "
-             "posts)\n";
+      std::cout << "Usage: event_engine.exe [options]\n"
+                << "Options:\n"
+                << "  --benchmark <asset>   Market benchmark asset name "
+                   "(default: ES)\n";
       return 0;
     }
   }
 
   std::cout << "Starting Event Study Calculation...\n";
-  std::cout << "Data Dir: " << data_dir << "\n";
-  std::cout << "Output Path: " << output_path << "\n";
-  std::cout << "Benchmark Asset: " << benchmark_asset << "\n";
-  std::cout << "Test Mode: "
-            << (test_mode ? "Enabled (First 50 posts)" : "Disabled") << "\n\n";
+  std::cout << "Benchmark Asset: " << benchmark_asset << "\n\n";
 
-  std::string posts_file = data_dir + "/trump_posts.csv";
-  if (!fs::exists(posts_file)) {
-    std::cerr << "Error: Posts file not found at " << posts_file << "\n";
+  PGconn *conn = connect_db();
+  if (!conn) {
     return 1;
   }
 
-  // Parse Trump posts
-  std::cout << "Parsing Trump posts...\n";
-  auto post_records = parse_csv(posts_file);
-  if (post_records.empty()) {
-    std::cerr << "Error: No posts parsed.\n";
+  // Parse Trump posts directly from database
+  std::cout << "Loading Trump posts from PostgreSQL...\n";
+  std::string posts_query =
+      "SELECT timestamp_utc, message, source_url, source_type "
+      "FROM trump_posts "
+      "WHERE topic IS NOT NULL AND topic != 'Miscellaneous' "
+      "ORDER BY timestamp_utc;";
+
+  PGresult *res_posts = PQexec(conn, posts_query.c_str());
+  if (PQresultStatus(res_posts) != PGRES_TUPLES_OK) {
+    std::cerr << "Error loading posts: " << PQerrorMessage(conn) << "\n";
+    PQclear(res_posts);
+    PQfinish(conn);
     return 1;
   }
 
-  auto post_header = post_records[0];
-  int ts_col = find_col(post_header, "timestamp_utc");
-  int msg_col = find_col(post_header, "message");
-  int url_col = find_col(post_header, "source_url");
-  int type_col = find_col(post_header, "source_type");
-
-  if (ts_col == -1 || msg_col == -1) {
-    std::cerr << "Error: Required columns in trump_posts.csv not found.\n";
-    return 1;
-  }
-
+  int num_posts = PQntuples(res_posts);
   std::vector<TrumpPost> posts;
-  for (size_t i = 1; i < post_records.size(); ++i) {
-    const auto &row = post_records[i];
-    if (row.size() <= std::max(ts_col, msg_col))
-      continue;
-
+  for (int i = 0; i < num_posts; ++i) {
     TrumpPost p;
-    p.timestamp_utc = row[ts_col];
+    p.timestamp_utc = PQgetvalue(res_posts, i, 0);
+    if (p.timestamp_utc.find('.') != std::string::npos) {
+      p.timestamp_utc = p.timestamp_utc.substr(0, p.timestamp_utc.find('.'));
+    }
     p.timestamp_ms = utc_to_ms(p.timestamp_utc);
     if (p.timestamp_ms == -1)
       continue;
-    p.message = row[msg_col];
-    p.source_url =
-        (url_col != -1 && row.size() > (size_t)url_col) ? row[url_col] : "";
-    p.source_type =
-        (type_col != -1 && row.size() > (size_t)type_col) ? row[type_col] : "";
+    p.message = PQgetvalue(res_posts, i, 1);
+    p.source_url = PQgetvalue(res_posts, i, 2);
+    p.source_type = PQgetvalue(res_posts, i, 3);
     posts.push_back(p);
   }
+  PQclear(res_posts);
 
   std::cout << "Loaded " << posts.size() << " valid posts.\n";
-
-  // Sort posts chronologically first
-  std::sort(posts.begin(), posts.end(),
-            [](const TrumpPost &a, const TrumpPost &b) {
-              return a.timestamp_ms < b.timestamp_ms;
-            });
-
-  if (test_mode) {
-    if (posts.size() > 50) {
-      posts.resize(50);
-    }
-    std::cout << "Trimmed to first " << posts.size()
-              << " posts for test mode.\n";
-  }
-
-  std::cout << "First 5 sorted posts:\n";
-  for (size_t i = 0; i < std::min((size_t)5, posts.size()); ++i) {
-    std::cout << "  Post " << i << ": " << posts[i].timestamp_utc
-              << " (ms=" << posts[i].timestamp_ms << ")\n";
-  }
 
   // Asset list
   std::vector<std::string> assets = {"I_NDX", "X_BTCUSD", "CL",
                                      "ES",    "YM",       "ZN"};
 
-  // Pre-load sorted dates for all assets from existing raw data files to
-  // speed up lookups
-  std::map<std::string, std::vector<std::string>> asset_sorted_dates;
-  for (const auto &asset : assets) {
-    std::string asset_dir = data_dir + "/market/minute/" + asset;
-    asset_sorted_dates[asset] = get_sorted_dates(asset_dir);
-    std::cout << "Asset: " << asset << " has "
-              << asset_sorted_dates[asset].size() << " 1-min data files.\n";
-  }
-
-  // Output file preparation
-  // Clear any existing data in the file at `output_path`.
-  std::ofstream out(output_path);
-  if (!out.is_open()) {
-    std::cerr << "Error: Could not open output file " << output_path << "\n";
-    return 1;
-  }
-
-  // Header row
-  out << "timestamp_utc,message_snippet,asset,baseline_price,baseline_time_"
-         "offset_sec"
-      << ",return_1m,return_5m,return_15m,return_30m,return_1h,return_1d"
-      << ",vol_1m,vol_5m,vol_15m,vol_30m,vol_1h,vol_1d"
-      << ",beta_1m,beta_5m,beta_15m,beta_30m,beta_1h,beta_1d\n";
-
-  // Event Study Windows (1m, 5m, 15m, 30m, 1h, 1d)
-  const int num_windows = 6;
-  std::string window_names[num_windows] = {"1m",  "5m", "15m",
-                                           "30m", "1h", "1d"};
-  long long window_ms[num_windows] = {
+  // Event Study Time Intervals (1m, 5m, 15m, 30m, 1h, 1d)
+  const int num_intervals = 6;
+  std::string interval_names[num_intervals] = {"1m",  "5m", "15m",
+                                               "30m", "1h", "1d"};
+  long long interval_ms[num_intervals] = {
       60 * 1000LL,          // 1 min
       5 * 60 * 1000LL,      // 5 min
       15 * 60 * 1000LL,     // 15 min
       30 * 60 * 1000LL,     // 30 min
       60 * 60 * 1000LL,     // 1 hour
-      24 * 60 * 60 * 1000LL // 1 day (24 hours)
+      24 * 60 * 60 * 1000LL // 1 day
   };
 
-  long long window_tolerance_ms[num_windows] = {
+  long long interval_tolerance_ms[num_intervals] = {
       30 * 1000LL,     // 1m: 30 sec tolerance
       60 * 1000LL,     // 5m: 1 min tolerance
       2 * 60 * 1000LL, // 15m: 2 min tolerance
@@ -563,83 +478,79 @@ int main(int argc, char *argv[]) {
       30 * 60 * 1000LL // 1d: 30 min tolerance
   };
 
+  // Start database transaction to bundle all commands into one transaction
+  PQexec(conn, "BEGIN;");
+
+  // Create table if not exists (just to make sure table is present)
+  PQexec(conn, "CREATE TABLE IF NOT EXISTS event_study_results ("
+               "timestamp_utc TIMESTAMP, "
+               "message_snippet TEXT, "
+               "asset TEXT, "
+               "baseline_price REAL, "
+               "baseline_time_offset_sec REAL, "
+               "return_1m REAL, return_5m REAL, return_15m REAL, return_30m "
+               "REAL, return_1h REAL, return_1d REAL, "
+               "vol_1m REAL, vol_5m REAL, vol_15m REAL, vol_30m REAL, vol_1h "
+               "REAL, vol_1d REAL, "
+               "beta_1m REAL, beta_5m REAL, beta_15m REAL, beta_30m REAL, "
+               "beta_1h REAL, beta_1d REAL, "
+               "PRIMARY KEY (timestamp_utc, asset)"
+               ");");
+
   // Process posts
   size_t processed_count = 0;
   auto start_time = std::chrono::high_resolution_clock::now();
 
   for (size_t post_idx = 0; post_idx < posts.size(); ++post_idx) {
     const auto &post = posts[post_idx];
-    std::string post_date = post.timestamp_utc.substr(0, 10);
 
     // Load benchmark data (ES) for this post
-    std::string bench_dir = data_dir + "/market/minute/" + benchmark_asset;
-    auto bench_bars = load_asset_data(
-        bench_dir, asset_sorted_dates[benchmark_asset], post_date);
+    auto bench_bars =
+        load_asset_data_from_db(conn, benchmark_asset, post.timestamp_utc);
 
     // Load all assets' data for this post
     for (const auto &asset : assets) {
-      std::string asset_dir = data_dir + "/market/minute/" + asset;
       auto asset_bars =
-          load_asset_data(asset_dir, asset_sorted_dates[asset], post_date);
+          load_asset_data_from_db(conn, asset, post.timestamp_utc);
 
       if (asset_bars.empty())
         continue;
 
-      // Find baseline bar at or after post's timestamp
       size_t start_idx = 0;
-      // Entry price, p0, is the nearest close price within 15 min tolerance of
-      // the post's timestamp.
       double p0 = find_price_at(asset_bars, post.timestamp_ms, 15 * 60 * 1000LL,
                                 start_idx);
 
-      // Print first 5 posts to verify that raw data has been read properly
-      if (post_idx < 5) {
-        std::cout << "[DEBUG] Post index " << post_idx << " ("
-                  << post.timestamp_utc << ", ms=" << post.timestamp_ms
-                  << ") for asset " << asset << ": loaded " << asset_bars.size()
-                  << " bars. p0=" << p0;
-        if (!asset_bars.empty()) {
-          std::cout << ", first_bar=" << asset_bars[0].timestamp_ms
-                    << ", last_bar=" << asset_bars.back().timestamp_ms;
-        }
-        std::cout << "\n";
-      }
-
       if (p0 <= 0.0) {
-        // Asset was not active / no data around post time, skip
         continue;
       }
 
       long long t0 = asset_bars[start_idx].timestamp_ms;
       double baseline_offset_sec = (t0 - post.timestamp_ms) / 1000.0;
 
-      double returns[num_windows] = {-1.0, -1.0, -1.0, -1.0, -1.0, -1.0};
-      double vols[num_windows] = {-1.0, -1.0, -1.0, -1.0, -1.0, -1.0};
-      double betas[num_windows] = {-99.0, -99.0, -99.0, -99.0, -99.0, -99.0};
+      double returns[num_intervals] = {-1.0, -1.0, -1.0, -1.0, -1.0, -1.0};
+      double vols[num_intervals] = {-1.0, -1.0, -1.0, -1.0, -1.0, -1.0};
+      std::optional<double>
+          betas[num_intervals]; // default value is std::nullopt
 
-      for (int w = 0; w < num_windows; ++w) {
-        long long target_ms = t0 + window_ms[w];
+      for (int w = 0; w < num_intervals; ++w) {
+        long long target_ms = t0 + interval_ms[w];
         size_t end_idx = 0;
         double p_target = find_price_at(asset_bars, target_ms,
-                                        window_tolerance_ms[w], end_idx);
+                                        interval_tolerance_ms[w], end_idx);
 
         if (p_target > 0.0 && p0 > 0.0) {
           returns[w] = (p_target - p0) / p0;
           vols[w] = compute_volatility(asset_bars, start_idx, end_idx);
 
           if (asset == benchmark_asset) {
-            betas[w] =
-                1.0; // Self-beta is mathematically 1.0. No need to calculate.
+            betas[w] = 1.0;
           } else if (!bench_bars.empty()) {
             betas[w] = compute_beta(asset_bars, start_idx, end_idx, bench_bars);
           }
         }
       }
 
-      // Write to output CSV
-      // Keep a short snippet of the original post message to keep CSV clean
       std::string msg_snippet = post.message;
-      // Clean message text of newlines, carriage returns, and quotes
       msg_snippet.erase(
           std::remove(msg_snippet.begin(), msg_snippet.end(), '\n'),
           msg_snippet.end());
@@ -653,37 +564,58 @@ int main(int argc, char *argv[]) {
         msg_snippet = msg_snippet.substr(0, 47) + "...";
       }
 
-      out << post.timestamp_utc << ",\"" << msg_snippet << "\"," << asset << ","
-          << std::fixed << std::setprecision(6) << p0 << ","
-          << baseline_offset_sec;
+      // Format SQL query for upsert of returns, volatilities, and betas
+      std::ostringstream sql;
+      sql << "INSERT INTO event_study_results ("
+          << "timestamp_utc, message_snippet, asset, baseline_price, "
+             "baseline_time_offset_sec, "
+          << "return_1m, return_5m, return_15m, return_30m, return_1h, "
+             "return_1d, "
+          << "vol_1m, vol_5m, vol_15m, vol_30m, vol_1h, vol_1d, "
+          << "beta_1m, beta_5m, beta_15m, beta_30m, beta_1h, beta_1d"
+          << ") VALUES ("
+          << "'" << post.timestamp_utc << "', "
+          << "'" << escape_sql_string(msg_snippet) << "', "
+          << "'" << asset << "', " << p0 << ", " << baseline_offset_sec << ", ";
 
-      // Write Returns
-      for (int w = 0; w < num_windows; ++w) {
-        if (returns[w] == -1.0 && vols[w] == -1.0) {
-          out << ",NaN";
-        } else {
-          out << "," << returns[w];
-        }
+      // returns
+      for (int w = 0; w < num_intervals; ++w) {
+        if (returns[w] == -1.0 && vols[w] == -1.0)
+          sql << "NULL, ";
+        else
+          sql << returns[w] << ", ";
       }
+      // vols
+      for (int w = 0; w < num_intervals; ++w) {
+        if (vols[w] == -1.0)
+          sql << "NULL, ";
+        else
+          sql << vols[w] << ", ";
+      }
+      // betas
+      for (int w = 0; w < num_intervals; ++w) {
+        if (!betas[w].has_value())
+          sql << "NULL" << (w == num_intervals - 1 ? "" : ", ");
+        else
+          sql << betas[w].value() << (w == num_intervals - 1 ? "" : ", ");
+      }
+      sql << ") ON CONFLICT (timestamp_utc, asset) DO UPDATE SET "
+          << "message_snippet = EXCLUDED.message_snippet, "
+          << "baseline_price = EXCLUDED.baseline_price, "
+          << "baseline_time_offset_sec = EXCLUDED.baseline_time_offset_sec, "
+          << "return_1m = EXCLUDED.return_1m, return_5m = EXCLUDED.return_5m, "
+             "return_15m = EXCLUDED.return_15m, return_30m = "
+             "EXCLUDED.return_30m, return_1h = EXCLUDED.return_1h, return_1d = "
+             "EXCLUDED.return_1d, "
+          << "vol_1m = EXCLUDED.vol_1m, vol_5m = EXCLUDED.vol_5m, vol_15m = "
+             "EXCLUDED.vol_15m, vol_30m = EXCLUDED.vol_30m, vol_1h = "
+             "EXCLUDED.vol_1h, vol_1d = EXCLUDED.vol_1d, "
+          << "beta_1m = EXCLUDED.beta_1m, beta_5m = EXCLUDED.beta_5m, beta_15m "
+             "= EXCLUDED.beta_15m, beta_30m = EXCLUDED.beta_30m, beta_1h = "
+             "EXCLUDED.beta_1h, beta_1d = EXCLUDED.beta_1d;";
 
-      // Write Volatilities
-      for (int w = 0; w < num_windows; ++w) {
-        if (vols[w] == -1.0) {
-          out << ",NaN";
-        } else {
-          out << "," << vols[w];
-        }
-      }
-
-      // Write Betas
-      for (int w = 0; w < num_windows; ++w) {
-        if (betas[w] == -99.0) {
-          out << ",NaN";
-        } else {
-          out << "," << betas[w];
-        }
-      }
-      out << "\n";
+      PGresult *res_ins = PQexec(conn, sql.str().c_str());
+      PQclear(res_ins);
     }
 
     processed_count++;
@@ -698,9 +630,8 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  out.close();
-  std::cout
-      << "\nEvent study analysis completed successfully. Results saved to "
-      << output_path << "\n";
+  PQexec(conn, "COMMIT;");
+  PQfinish(conn);
+  std::cout << "\nEvent study analysis completed. Results saved to database.\n";
   return 0;
 }

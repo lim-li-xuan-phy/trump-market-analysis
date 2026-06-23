@@ -7,20 +7,19 @@ on the post dates are downloaded. Note that historical data is limited for free 
 
 import os
 from dotenv import load_dotenv
-import csv
 import time
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from dateutil.relativedelta import relativedelta
+from db_manager import get_connection
+from psycopg2.extras import execute_values
 
 # Constants
-MASSIVE_API_KEY = load_dotenv("../.env").get("MASSIVE_API_KEY")
+load_dotenv("../.env")
+MASSIVE_API_KEY = os.environ.get("MASSIVE_API_KEY")
 BASE_URL = "https://api.massive.com"
-DATA_PATH = "../../data"
-POSTS_FILE = f"{DATA_PATH}/trump_posts.csv" 
-FUTURES_CACHE_FILE = f"{DATA_PATH}/market/futures_contracts_cache.csv" # Stores the front-month futures that were active at the time of Trump's posts
 EARLIEST_MARKET_DATA_DATE = date.today() - relativedelta(years=2) # Earliest date that data is accessible on Massive free tier
 
 # List of financial assets
@@ -71,43 +70,41 @@ def format_timestamp_ns(timestamp_ns):
 futures_cache = {}
 def load_futures_cache():
     """
-    Load front-month futures data from FUTURES_CACHE_FILE into the `futures_cache` dictionary.
+    Load front-month futures data from database into the `futures_cache` dictionary.
     """
-    if os.path.exists(FUTURES_CACHE_FILE):
-        try:
-            df = pd.read_csv(FUTURES_CACHE_FILE)
-            for _, row in df.iterrows():
-                futures_cache[(str(row["date"]), str(row["product"]))] = (str(row["ticker"]), str(row["last_trade_date"]))
-            print(f"Loaded {len(futures_cache)} front-month futures contract from cache.")
-        except Exception as e:
-            print(f"Error loading futures contracts cache: {e}")
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT date, product, ticker, last_trade_date FROM futures_contracts_cache")
+        rows = cursor.fetchall()
+        for r in rows:
+            futures_cache[(str(r[0]), str(r[1]))] = (str(r[2]), str(r[3]))
+        print(f"Loaded {len(futures_cache)} front-month futures contracts from database cache.")
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error loading futures contracts cache from database: {e}")
 
 def save_futures_cache(date_str, product_code, ticker, last_trade_date):
     """
-    Save the futures' information to the futures_cache dictionary.
+    Save the futures' information to the futures_cache dictionary and database.
     """
     futures_cache[(date_str, product_code)] = (ticker, last_trade_date)
-
-def save_all_futures_cache():
-    """
-    Overwrites FUTURES_CACHE_FILE with the entire contents of the `futures_cache` dictionary.
-    """
     try:
-        os.makedirs(os.path.dirname(FUTURES_CACHE_FILE), exist_ok=True)
-        temp_file = FUTURES_CACHE_FILE + ".tmp"
-        with open(temp_file, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["date", "product", "ticker", "last_trade_date"])
-            for (date_str, product), (ticker, last_trade) in sorted(futures_cache.items()):
-                writer.writerow([date_str, product, ticker, last_trade])
-        
-        # Replace original file atomically (safely handling potential locks)
-        if os.path.exists(FUTURES_CACHE_FILE):
-            os.remove(FUTURES_CACHE_FILE)
-        os.rename(temp_file, FUTURES_CACHE_FILE)
-        print(f"Successfully saved {len(futures_cache)} contracts to cache file.")
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO futures_contracts_cache (date, product, ticker, last_trade_date)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (date, product) DO UPDATE SET
+                ticker = EXCLUDED.ticker,
+                last_trade_date = EXCLUDED.last_trade_date
+        """, (date_str, product_code, ticker, last_trade_date))
+        conn.commit()
+        cursor.close()
+        conn.close()
     except Exception as e:
-        print(f"Error saving futures cache to disk: {e}")
+        print(f"Error saving futures cache to database: {e}")
 
 def query_front_month_futures_api(product_code, date_str):
     """
@@ -129,16 +126,12 @@ def query_front_month_futures_api(product_code, date_str):
         results = data.get("results", [])
         active_contracts = []
         for c in results:
-            # Skip spread contracts (calendar spreads, butterflies, etc.), identified by ":" or "-" in ticker.
-            # Outright futures tickers are plain alphanumeric.
             if ":" in c["ticker"] or "-" in c["ticker"]:
                 continue
-            # Skip contracts that had already expired before `date_str`.
             if c["last_trade_date"] < date_str:
                 continue
             active_contracts.append(c)
         
-        # Sort by ascending expiry date last_trade_date
         active_contracts.sort(key=lambda x: x["last_trade_date"])
         if active_contracts:
             ticker = active_contracts[0]["ticker"]
@@ -148,36 +141,27 @@ def query_front_month_futures_api(product_code, date_str):
 
 def find_front_month_futures(product_code, date_str):
     """
-    product_code: The product code of a futures contract eg. "CL".
-    date_str: The date of a Trump post.
-
     Search for the front-month futures contracts belonging to a given `product_code`, that were
     active on the date `date_str`.
     """
-    # If there is a futures contract matching our requirements already in futures_cache, return that contract.
     if (date_str, product_code) in futures_cache:
         val = futures_cache[(date_str, product_code)]
         if val == ("NONE", "NONE") or val == (None, None) or val[0] == "NONE":
             return None
         return val
 
-    # Send API request to Massive for futures contracts that match our requirements.   
     print(f"Searching for front-month {product_code} futures contracts that were active on {date_str}...")
     result = query_front_month_futures_api(product_code, date_str)
     if result:
         ticker, last_trade_date = result
         save_futures_cache(date_str, product_code, ticker, last_trade_date)
-        # Polite crawl-delay to avoid rate limiter
         time.sleep(0.2)
         return ticker, last_trade_date
             
-    # If the contract wasn't found (e.g., weekend or holiday), look back up to 5 days.
-    # The active contract on a weekend/holiday is the same as the active contract on the preceding trading day.
     curr_dt = datetime.strptime(date_str, "%Y-%m-%d")
     for i in range(1, 6):
         prev_date_str = (curr_dt - timedelta(days=i)).strftime("%Y-%m-%d")
         
-        # Check if the lookback date's contract is already in cache
         if (prev_date_str, product_code) in futures_cache:
             val = futures_cache[(prev_date_str, product_code)]
             if val != ("NONE", "NONE") and val != (None, None) and val[0] != "NONE":
@@ -186,34 +170,27 @@ def find_front_month_futures(product_code, date_str):
                 save_futures_cache(date_str, product_code, ticker, last_trade_date)
                 return ticker, last_trade_date
         else:
-            # Query the API for the preceding date
             print(f"Looking back {i} day(s) to {prev_date_str} for active {product_code} contract...")
             val = query_front_month_futures_api(product_code, prev_date_str)
             if val:
                 ticker, last_trade_date = val
                 print(f"Found active contract {ticker} on {prev_date_str} for {date_str}.")
-                # Save both the preceding date and the current date in cache to minimize future requests
                 save_futures_cache(prev_date_str, product_code, ticker, last_trade_date)
                 save_futures_cache(date_str, product_code, ticker, last_trade_date)
                 time.sleep(0.2)
                 return ticker, last_trade_date
             else:
-                # Cache the preceding date as NONE to avoid querying it again
                 save_futures_cache(prev_date_str, product_code, "NONE", "NONE")
                 time.sleep(0.2)
 
-    # If still not found after 5 days of lookback, cache this date as NONE
     print(f"Could not find {product_code} futures contract that were active on or up to 5 days before {date_str}. Skipping.")
     save_futures_cache(date_str, product_code, "NONE", "NONE")
     return None
 
 def download_1day_indices_crypto(ticker):
     """
-    Send API requests for 1-day frequency data for index and crypto tickers, then save the data to dest_file.
+    Send API requests for 1-day frequency data for index and crypto tickers, then save to database.
     """
-
-    dest_file = f"{DATA_PATH}/market/daily/{ticker.replace(':', '_')}.csv"
-    # Always download daily aggregates to ensure index/crypto data is up-to-date
     print(f"Downloading 1-day aggregates for {ticker}...")
     start_date = EARLIEST_MARKET_DATA_DATE
     url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/1/day/{start_date}/{datetime.now().strftime('%Y-%m-%d')}"
@@ -224,14 +201,30 @@ def download_1day_indices_crypto(ticker):
         data = response.json()
         results = data.get("results", [])
         if results:
-            os.makedirs(os.path.dirname(dest_file), exist_ok=True)
-            with open(dest_file, "w", encoding="utf-8", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["timestamp_utc", "timestamp_ms", "open", "high", "low", "close", "volume"])
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                insert_query = """
+                    INSERT INTO market_data_1day (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
+                    VALUES %s
+                    ON CONFLICT (ticker, timestamp_utc) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume
+                """
+                records = []
                 for r in results:
                     ts_utc = format_timestamp_ms(r["t"])
-                    writer.writerow([ts_utc, r["t"], r["o"], r["h"], r["l"], r["c"], r.get("v", 0.0)])
-            print(f"Saved {len(results)} daily bars for {ticker} to {dest_file}")
+                    records.append((ticker.replace(':', '_'), ts_utc, r["t"], r["o"], r["h"], r["l"], r["c"], r.get("v", 0.0)))
+                execute_values(cursor, insert_query, records)
+                conn.commit()
+                cursor.close()
+                conn.close()
+                print(f"Saved {len(results)} daily bars for {ticker} to database.")
+            except Exception as e:
+                print(f"Error saving daily bars for {ticker} to database: {e}")
         else:
             print(f"No results returned for 1-day frequency {ticker} data.")
     else:
@@ -240,15 +233,23 @@ def download_1day_indices_crypto(ticker):
 
 def download_1day_futures(ticker, first_trade, last_trade):
     """
-    Send API requests for 1-day frequency data for futures, then save the data to dest_file.
+    Send API requests for 1-day frequency data for futures, then save to database.
     """
-    dest_file = f"{DATA_PATH}/market/daily/{ticker}.csv"
-    if os.path.exists(dest_file):
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        if last_trade < today_str:
-            # If the contract has already expired, its historical daily data will not change.
-            return
-        
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if last_trade < today_str:
+        # Check if we already have daily data for this expired contract
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM market_data_1day WHERE ticker = %s LIMIT 1", (ticker,))
+            exists = cursor.fetchone() is not None
+            cursor.close()
+            conn.close()
+            if exists:
+                return
+        except Exception as e:
+            print(f"Error checking daily data cache for {ticker}: {e}")
+
     print(f"Downloading 1-day aggregates for futures contract {ticker}...")
     url = f"{BASE_URL}/futures/v1/aggs/{ticker}"
     params = {
@@ -263,65 +264,135 @@ def download_1day_futures(ticker, first_trade, last_trade):
         data = response.json()
         results = data.get("results", [])
         if results:
-            os.makedirs(os.path.dirname(dest_file), exist_ok=True)
-            # Overwrite the daily file to update with any new bars for still-active contracts
-            with open(dest_file, "w", encoding="utf-8", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["timestamp_utc", "timestamp_ms", "open", "high", "low", "close", "volume"])
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                insert_query = """
+                    INSERT INTO market_data_1day (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
+                    VALUES %s
+                    ON CONFLICT (ticker, timestamp_utc) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume
+                """
+                records = []
                 for r in results:
-                    # convert window_start (nanoseconds) to milliseconds
                     timestamp_ms = r["window_start"] // 1000000
                     ts_utc = format_timestamp_ns(r["window_start"])
-                    writer.writerow([ts_utc, timestamp_ms, r["open"], r["high"], r["low"], r["close"], r["volume"]])
-            print(f"Saved {len(results)} daily bars for futures {ticker} to {dest_file}")
+                    records.append((ticker, ts_utc, timestamp_ms, r["open"], r["high"], r["low"], r["close"], r["volume"]))
+                execute_values(cursor, insert_query, records)
+                conn.commit()
+                cursor.close()
+                conn.close()
+                print(f"Saved {len(results)} daily bars for futures {ticker} to database.")
+            except Exception as e:
+                print(f"Error saving daily futures bars for {ticker} to database: {e}")
         else:
             print(f"No results returned for 1-day {ticker} futures data.")
     else:
         print(f"Failed to fetch 1-day frequency data for {ticker} futures.")
     time.sleep(1.0)
 
+def is_date_downloaded_in_db(ticker, date_str):
+    """
+    Check if a specific date for a ticker has been processed in download log.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT status FROM market_data_download_log WHERE ticker = %s AND date = %s",
+            (ticker, date_str)
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if row is not None:
+            return True, row[0]
+        return False, None
+    except Exception as e:
+        print(f"Error checking download log: {e}")
+        return False, None
+
+def mark_date_downloaded_in_db(ticker, date_str, status):
+    """
+    Mark a date as downloaded (either success or empty) for a ticker.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO market_data_download_log (ticker, date, status)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (ticker, date) DO UPDATE SET status = EXCLUDED.status
+        """, (ticker, date_str, status))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error updating download log: {e}")
+
 def download_1min_indices_crypto(ticker, date_str):
     """
-    Send API requests for 1-minute frequency data for index and crypto tickers, then save the data to dest_file.
+    Send API requests for 1-minute frequency data for index and crypto tickers, then save to database.
     """
-    dest_file = f"{DATA_PATH}/market/minute/{ticker.replace(':', '_')}/{date_str}.csv"
-    if os.path.exists(dest_file):
+    processed, status = is_date_downloaded_in_db(ticker.replace(':', '_'), date_str)
+    if processed:
         return
         
     url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/1/minute/{date_str}/{date_str}"
     params = {"limit": 50000}
     
-    os.makedirs(os.path.dirname(dest_file), exist_ok=True)
     response = api_request(url, params)
     
     if response and response.status_code == 200:
         data = response.json()
         results = data.get("results", [])
-        with open(dest_file, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["timestamp_utc", "timestamp_ms", "open", "high", "low", "close", "volume"])
-            for r in results:
-                ts_utc = format_timestamp_ms(r["t"])
-                writer.writerow([ts_utc, r["t"], r["o"], r["h"], r["l"], r["c"], r.get("v", 0.0)])
-        print(f"  Downloaded 1-minute data for {ticker} on {date_str} ({len(results)} bars).")
+        
+        if results:
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                insert_query = """
+                    INSERT INTO market_data_1min (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
+                    VALUES %s
+                    ON CONFLICT (ticker, timestamp_utc) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume
+                """
+                records = []
+                for r in results:
+                    ts_utc = format_timestamp_ms(r["t"])
+                    records.append((ticker.replace(':', '_'), ts_utc, r["t"], r["o"], r["h"], r["l"], r["c"], r.get("v", 0.0)))
+                execute_values(cursor, insert_query, records)
+                conn.commit()
+                cursor.close()
+                conn.close()
+                print(f"  Downloaded 1-minute data for {ticker} on {date_str} ({len(results)} bars).")
+                mark_date_downloaded_in_db(ticker.replace(':', '_'), date_str, "success")
+            except Exception as e:
+                print(f"Error saving minute bars for {ticker} to database: {e}")
+        else:
+            print(f"  No data for {ticker} on {date_str} (marked empty).")
+            mark_date_downloaded_in_db(ticker.replace(':', '_'), date_str, "empty")
     else:
-        # Save a skeleton file (contains only headings, no data) to mark the date `date_str` as queried. 
-        # This is to prevent redundant queries on weekends and holidays.
-        with open(dest_file, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["timestamp_utc", "timestamp_ms", "open", "high", "low", "close", "volume"])
-        print(f"  No data for {ticker} on {date_str} (saved empty checkpoint).")
+        print(f"  Failed to fetch 1-minute data for {ticker} on {date_str} (marked empty).")
+        mark_date_downloaded_in_db(ticker.replace(':', '_'), date_str, "empty")
     time.sleep(1.0)
 
 def download_1min_futures(product_code, ticker, date_str):
     """
-    Send API requests for 1-minute frequency data for futures, then save the data to dest_file.
+    Send API requests for 1-minute frequency data for futures, then save to database.
     """
-    dest_file = f"{DATA_PATH}/market/minute/{product_code}/{date_str}.csv"
-    if os.path.exists(dest_file):
+    processed, status = is_date_downloaded_in_db(product_code, date_str)
+    if processed:
         return
         
-    # Get range for the single day (date_str and next_date_str)
     dt = datetime.strptime(date_str, "%Y-%m-%d")
     next_date_str = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
     
@@ -333,55 +404,83 @@ def download_1min_futures(product_code, ticker, date_str):
         "limit": 50000
     }
     
-    os.makedirs(os.path.dirname(dest_file), exist_ok=True)
     response = api_request(url, params)
     
     if response and response.status_code == 200:
         data = response.json()
         results = data.get("results", [])
-        with open(dest_file, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["timestamp_utc", "timestamp_ms", "open", "high", "low", "close", "volume", "ticker"])
-            for r in results:
-                timestamp_ms = r["window_start"] // 1000000
-                ts_utc = format_timestamp_ns(r["window_start"])
-                writer.writerow([ts_utc, timestamp_ms, r["open"], r["high"], r["low"], r["close"], r["volume"], ticker])
-        print(f"  Downloaded 1-minute data for futures {product_code} ({ticker}) on {date_str} ({len(results)} bars).")
+        
+        if results:
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                insert_query = """
+                    INSERT INTO market_data_1min (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
+                    VALUES %s
+                    ON CONFLICT (ticker, timestamp_utc) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume
+                """
+                records = []
+                for r in results:
+                    timestamp_ms = r["window_start"] // 1000000
+                    ts_utc = format_timestamp_ns(r["window_start"])
+                    records.append((product_code, ts_utc, timestamp_ms, r["open"], r["high"], r["low"], r["close"], r["volume"]))
+                execute_values(cursor, insert_query, records)
+                conn.commit()
+                cursor.close()
+                conn.close()
+                print(f"  Downloaded 1-minute data for futures {product_code} ({ticker}) on {date_str} ({len(results)} bars).")
+                mark_date_downloaded_in_db(product_code, date_str, "success")
+            except Exception as e:
+                print(f"Error saving minute futures bars for {product_code} to database: {e}")
+        else:
+            print(f"  No data for futures {product_code} ({ticker}) on {date_str} (marked empty).")
+            mark_date_downloaded_in_db(product_code, date_str, "empty")
     else:
-        with open(dest_file, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["timestamp_utc", "timestamp_ms", "open", "high", "low", "close", "volume", "ticker"])
-        print(f"  No data for futures {product_code} ({ticker}) on {date_str} (saved empty checkpoint).") 
+        print(f"  Failed to fetch 1-minute data for futures {product_code} ({ticker}) on {date_str} (marked empty).")
+        mark_date_downloaded_in_db(product_code, date_str, "empty")
     time.sleep(1.0)
 
 def main():
-    if not os.path.exists(POSTS_FILE):
-        print(f"Error: {POSTS_FILE} not found! Please run scrape_posts.py first.")
-        return
-        
-    print("Loading post dates...")
-    df = pd.read_csv(POSTS_FILE)
-    post_dates = set()
-    for ts in df["timestamp_utc"].dropna():
-        try:
-            date_str = ts.split(" ")[0]
+    import argparse
+    parser = argparse.ArgumentParser(description="Download market data through API requests to Massive.com")
+    parser.add_argument('--limit', type=int, default=None, help='Limit to latest N posts')
+    parser.add_argument('--num-posts', type=int, default=None, help='Limit to latest N posts')
+    args, unknown = parser.parse_known_args()
+    
+    limit = args.limit if args.limit is not None else args.num_posts
 
-            # Verify date format
+    print("Loading post dates from PostgreSQL database...")
+    post_dates = set()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        query = "SELECT timestamp_utc FROM trump_posts WHERE topic IS NOT NULL AND topic != 'Miscellaneous' ORDER BY timestamp_utc DESC"
+        if limit is not None:
+            query += " LIMIT %s"
+            cursor.execute(query, (limit,))
+        else:
+            cursor.execute(query)
+        rows = cursor.fetchall()
+        for r in rows:
+            ts = str(r[0])
+            date_str = ts.split(" ")[0]
             dt = datetime.strptime(date_str, "%Y-%m-%d")
             post_dates.add(date_str)
-
-            # Add next day to cover returns windows
             next_date = dt + timedelta(days=1)
             post_dates.add(next_date.strftime("%Y-%m-%d"))
-        except Exception:
-            continue
+        cursor.close()
+        conn.close()
+        print(f"Loaded {len(post_dates)} unique dates from database.")
+    except Exception as e:
+        print(f"Error loading post dates from database: {e}.")
+        return
             
     sorted_dates = sorted(list(post_dates))
-    import sys
-    test_mode = "--test" in sys.argv
-    if test_mode:
-        print("Running in TEST MODE: Limiting to first 3 dates for search of relevant futures contracts and download of 1-min frequency data.")
-        sorted_dates = sorted_dates[:3]
         
     print(f"Identified {len(sorted_dates)} unique dates (including post dates and next days) for downloading front-month futures data.")
     
@@ -402,12 +501,7 @@ def main():
             result = find_front_month_futures(product, date_str)
             if result:
                 ticker, last_trade = result
-                # Get 1-day frequency data from the time period between EARLIEST_MARKET_DATA_DATE and expiry date `last_trade`
-                # of this futures contract. The API will only output data within the contract's actual life.
                 unique_futures_tickers[ticker] = (product, EARLIEST_MARKET_DATA_DATE, last_trade)
-                
-    # Save the updated futures cache to disk
-    save_all_futures_cache()
                 
     # Download 1-day frequency data for all cached futures contracts
     print("Downloading 1-Day Futures Contracts Data...")
@@ -418,27 +512,27 @@ def main():
     print("Downloading 1-Minute Frequency Data...")
     total_dates = len(sorted_dates)
     for idx, date_str in enumerate(sorted_dates):
-        # Check if all 1-min data files for this date already exist to avoid redundant checks and prints
-        all_1min_exists = True
+        # Check if all 1-min data has already been processed (either success or empty)
+        all_1min_processed = True
         for ticker in INDICES:
-            dest_file = f"{DATA_PATH}/market/minute/{ticker.replace(':', '_')}/{date_str}.csv"
-            if not os.path.exists(dest_file):
-                all_1min_exists = False
+            processed, _ = is_date_downloaded_in_db(ticker.replace(':', '_'), date_str)
+            if not processed:
+                all_1min_processed = False
                 break
-        if all_1min_exists:
+        if all_1min_processed:
             for ticker in CRYPTO:
-                dest_file = f"{DATA_PATH}/market/minute/{ticker.replace(':', '_')}/{date_str}.csv"
-                if not os.path.exists(dest_file):
-                    all_1min_exists = False
+                processed, _ = is_date_downloaded_in_db(ticker.replace(':', '_'), date_str)
+                if not processed:
+                    all_1min_processed = False
                     break
-        if all_1min_exists:
+        if all_1min_processed:
             for product in FUTURES_PRODUCTS:
-                dest_file = f"{DATA_PATH}/market/minute/{product}/{date_str}.csv"
-                if not os.path.exists(dest_file):
-                    all_1min_exists = False
+                processed, _ = is_date_downloaded_in_db(product, date_str)
+                if not processed:
+                    all_1min_processed = False
                     break
         
-        if all_1min_exists:
+        if all_1min_processed:
             continue
             
         print(f"[{idx+1}/{total_dates}] Processing date: {date_str}")
@@ -458,8 +552,6 @@ def main():
                 futures_ticker, _ = result
                 download_1min_futures(product, futures_ticker, date_str)
                 
-    # Save the updated futures cache to disk
-    save_all_futures_cache()
     print("Successfully completed download of market data.")
 
 if __name__ == "__main__":
