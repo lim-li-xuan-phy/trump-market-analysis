@@ -11,18 +11,12 @@ from db_manager import get_connection
 from psycopg2.extras import execute_values
 
 # Constants
-TRUTH_ARCHIVE_URL = "https://ix.cnn.io/data/truth-social/truth_archive.json"
-EARLIEST_MARKET_DATA_DATE = date.today() - relativedelta(years=2) # Earliest date of financial data that is accessible on Massive
+POSTS_ARCHIVE_URL = "https://ix.cnn.io/data/truth-social/truth_archive.json"
+EARLIEST_POSTS_DATE = date(2024, 12, 1) # Limit the earliest date of the scraped posts to 1 Dec 2024
 
 def main():
-    test_mode = "--test" in sys.argv
-    if test_mode:
-        # For test mode, we limit posts to the last 3 days
-        cutoff_date = date.today() - relativedelta(days=3)
-        print(f"Running scraper in TEST MODE (limited to posts after {cutoff_date}).")
-    else:
-        cutoff_date = EARLIEST_MARKET_DATA_DATE
-        print(f"Running scraper (filtering posts after earliest market data date: {cutoff_date}).")
+    cutoff_date = EARLIEST_POSTS_DATE
+    print(f"Running scraper (filtering posts after earliest scrape date: {cutoff_date}).")
     
     # Get timestamps of posts already in database
     scraped_timestamps = set()
@@ -37,9 +31,9 @@ def main():
     except Exception as e:
         print(f"Could not load posts from database: {e}.")
             
-    print(f"Fetching posts from {TRUTH_ARCHIVE_URL}...")
+    print(f"Fetching posts from {POSTS_ARCHIVE_URL}...")
     try:
-        response = requests.get(TRUTH_ARCHIVE_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        response = requests.get(POSTS_ARCHIVE_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
         if response.status_code != 200:
             print(f"Error fetching Truth Social archive: {response.status_code}")
             sys.exit(1)

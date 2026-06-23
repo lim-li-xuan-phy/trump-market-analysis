@@ -100,18 +100,9 @@ def get_sentiment(text, sia):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Trump Posts Sentiment NLP & Topic Classification")
-    parser.add_argument('--test', action='store_true',
-                        help='Run in test mode on first 50 posts')
-    
-    args = parser.parse_args()
-    
     print(f"Starting sentiment analysis and topic classification...")
     print("Input source: PostgreSQL database (trump_posts table)")
     
-    if args.test:
-        print("Running in TEST MODE (first 50 posts only)")
-
     # Read data
     timestamps = []
     messages = []
@@ -120,8 +111,6 @@ def main():
         conn = get_connection()
         cursor = conn.cursor()
         query = "SELECT timestamp_utc, message FROM trump_posts ORDER BY timestamp_utc DESC"
-        if args.test:
-            query += " LIMIT 50"
         cursor.execute(query)
         rows = cursor.fetchall()
         for r in rows:

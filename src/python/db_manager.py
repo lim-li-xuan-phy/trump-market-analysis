@@ -72,7 +72,7 @@ def init_tables():
     create_database_if_not_exists()
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     # Trump Posts table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS trump_posts (
@@ -98,9 +98,9 @@ def init_tables():
         );
     """)
     
-    # Market Data Minute table
+    # Market Data 1-Minute table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS market_data_minute (
+        CREATE TABLE IF NOT EXISTS market_data_1min (
             ticker TEXT,
             timestamp_utc TIMESTAMP,
             timestamp_ms BIGINT,
@@ -113,9 +113,9 @@ def init_tables():
         );
     """)
 
-    # Market Data Daily table
+    # Market Data 1-Day table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS market_data_daily (
+        CREATE TABLE IF NOT EXISTS market_data_1day (
             ticker TEXT,
             timestamp_utc TIMESTAMP,
             timestamp_ms BIGINT,

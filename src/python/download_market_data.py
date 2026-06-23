@@ -205,7 +205,7 @@ def download_1day_indices_crypto(ticker):
                 conn = get_connection()
                 cursor = conn.cursor()
                 insert_query = """
-                    INSERT INTO market_data_daily (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
+                    INSERT INTO market_data_1day (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
                     VALUES %s
                     ON CONFLICT (ticker, timestamp_utc) DO UPDATE SET
                         open = EXCLUDED.open,
@@ -241,7 +241,7 @@ def download_1day_futures(ticker, first_trade, last_trade):
         try:
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM market_data_daily WHERE ticker = %s LIMIT 1", (ticker,))
+            cursor.execute("SELECT 1 FROM market_data_1day WHERE ticker = %s LIMIT 1", (ticker,))
             exists = cursor.fetchone() is not None
             cursor.close()
             conn.close()
@@ -268,7 +268,7 @@ def download_1day_futures(ticker, first_trade, last_trade):
                 conn = get_connection()
                 cursor = conn.cursor()
                 insert_query = """
-                    INSERT INTO market_data_daily (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
+                    INSERT INTO market_data_1day (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
                     VALUES %s
                     ON CONFLICT (ticker, timestamp_utc) DO UPDATE SET
                         open = EXCLUDED.open,
@@ -356,7 +356,7 @@ def download_1min_indices_crypto(ticker, date_str):
                 conn = get_connection()
                 cursor = conn.cursor()
                 insert_query = """
-                    INSERT INTO market_data_minute (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
+                    INSERT INTO market_data_1min (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
                     VALUES %s
                     ON CONFLICT (ticker, timestamp_utc) DO UPDATE SET
                         open = EXCLUDED.open,
@@ -415,7 +415,7 @@ def download_1min_futures(product_code, ticker, date_str):
                 conn = get_connection()
                 cursor = conn.cursor()
                 insert_query = """
-                    INSERT INTO market_data_minute (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
+                    INSERT INTO market_data_1min (ticker, timestamp_utc, timestamp_ms, open, high, low, close, volume)
                     VALUES %s
                     ON CONFLICT (ticker, timestamp_utc) DO UPDATE SET
                         open = EXCLUDED.open,
@@ -446,12 +446,25 @@ def download_1min_futures(product_code, ticker, date_str):
     time.sleep(1.0)
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Download market data through API requests to Massive.com")
+    parser.add_argument('--limit', type=int, default=None, help='Limit to latest N posts')
+    parser.add_argument('--num-posts', type=int, default=None, help='Limit to latest N posts')
+    args, unknown = parser.parse_known_args()
+    
+    limit = args.limit if args.limit is not None else args.num_posts
+
     print("Loading post dates from PostgreSQL database...")
     post_dates = set()
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT timestamp_utc FROM trump_posts WHERE topic IS NOT NULL AND topic != 'Miscellaneous'")
+        query = "SELECT timestamp_utc FROM trump_posts WHERE topic IS NOT NULL AND topic != 'Miscellaneous' ORDER BY timestamp_utc DESC"
+        if limit is not None:
+            query += " LIMIT %s"
+            cursor.execute(query, (limit,))
+        else:
+            cursor.execute(query)
         rows = cursor.fetchall()
         for r in rows:
             ts = str(r[0])
@@ -468,11 +481,6 @@ def main():
         return
             
     sorted_dates = sorted(list(post_dates))
-    import sys
-    test_mode = "--test" in sys.argv
-    if test_mode:
-        print("Running in TEST MODE: Limiting to first 3 dates for search of relevant futures contracts and download of 1-min frequency data.")
-        sorted_dates = sorted_dates[:3]
         
     print(f"Identified {len(sorted_dates)} unique dates (including post dates and next days) for downloading front-month futures data.")
     

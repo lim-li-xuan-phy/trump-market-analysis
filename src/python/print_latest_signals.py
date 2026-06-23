@@ -8,7 +8,11 @@ import sys
 import subprocess
 from db_manager import get_connection
 
-def run_script(script_name, args):
+NUM_POSTS = 5 # No. of posts to display trading signals for
+
+def run_script(script_name, args=None):
+    if args is None:
+        args = []
     # Locate scripts in the same directory as this file
     python_dir = os.path.dirname(os.path.abspath(__file__))
     script_path = os.path.join(python_dir, script_name)
@@ -27,17 +31,15 @@ def run_script(script_name, args):
 def main():
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8')
-    # Pass command-line arguments (like --test) to sub-scripts
-    args = sys.argv[1:]
     
-    # Update social media posts in DB
-    run_script("scrape_posts.py", args)
+    # Update social media posts in database
+    run_script("scrape_posts.py")
 
-    # Update market financial data in DB
-    run_script("download_market_data.py", args)
+    # Update financial data in database
+    run_script("download_market_data.py", ["--limit", str(NUM_POSTS)])
     
-    # Update sentiment analysis and topics in DB
-    run_script("nlp.py", args)
+    # Update sentiment analysis and topics in database
+    run_script("nlp.py")
     
     # Compute and print trading signals of latest posts
     configurations = [
@@ -72,15 +74,15 @@ def main():
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        # Fetch the latest 15 posts matching any good configuration topic
+        # Fetch the latest NUM_POSTS posts matching any good configuration topic
         query = """
             SELECT timestamp_utc, message, topic, sentiment_score 
             FROM trump_posts 
             WHERE topic = ANY(%s)
             ORDER BY timestamp_utc DESC 
-            LIMIT 15
+            LIMIT %s
         """
-        cursor.execute(query, (good_topics,))
+        cursor.execute(query, (good_topics, NUM_POSTS))
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
