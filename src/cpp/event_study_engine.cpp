@@ -166,7 +166,7 @@ load_asset_data_from_db(PGconn *conn, const std::string &asset,
   std::vector<MinuteBar> bars;
 
   std::string date_query = "SELECT DISTINCT DATE(timestamp_utc) AS d "
-                           "FROM market_data_minute "
+                           "FROM market_data_1min "
                            "WHERE ticker = '" +
                            asset + "' AND timestamp_utc >= '" +
                            post_timestamp_utc +
@@ -192,7 +192,7 @@ load_asset_data_from_db(PGconn *conn, const std::string &asset,
 
   std::string bars_query =
       "SELECT timestamp_ms, open, high, low, close, volume "
-      "FROM market_data_minute "
+      "FROM market_data_1min "
       "WHERE ticker = '" +
       asset +
       "' AND "
@@ -394,29 +394,22 @@ std::optional<double> compute_beta(const std::vector<MinuteBar> &asset_bars,
 
 int main(int argc, char *argv[]) {
   std::string benchmark_asset = "ES";
-  bool test_mode = false;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--benchmark" && i + 1 < argc) {
       benchmark_asset = argv[++i];
-    } else if (arg == "--test") {
-      test_mode = true;
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "Usage: event_engine.exe [options]\n"
                 << "Options:\n"
                 << "  --benchmark <asset>   Market benchmark asset name "
-                   "(default: ES)\n"
-                << "  --test                Run in test mode (limits to first "
-                   "50 posts)\n";
+                   "(default: ES)\n";
       return 0;
     }
   }
 
   std::cout << "Starting Event Study Calculation...\n";
-  std::cout << "Benchmark Asset: " << benchmark_asset << "\n";
-  std::cout << "Test Mode: "
-            << (test_mode ? "Enabled (First 50 posts)" : "Disabled") << "\n\n";
+  std::cout << "Benchmark Asset: " << benchmark_asset << "\n\n";
 
   PGconn *conn = connect_db();
   if (!conn) {
@@ -458,14 +451,6 @@ int main(int argc, char *argv[]) {
   PQclear(res_posts);
 
   std::cout << "Loaded " << posts.size() << " valid posts.\n";
-
-  if (test_mode) {
-    if (posts.size() > 50) {
-      posts.resize(50);
-    }
-    std::cout << "Trimmed to first " << posts.size()
-              << " posts for test mode.\n";
-  }
 
   // Asset list
   std::vector<std::string> assets = {"I_NDX", "X_BTCUSD", "CL",
