@@ -1,5 +1,5 @@
 # Overview
-In this project, a quantitative analysis of market reactions to Trump's social media events reveals that market performance is significantly correlated with the sentiment score of Trump's posts. Hence, a trading strategy is developed to execute trades based on the sentiment scores in Trump's posts. The results of our backtests support the profitability of our trading strategy.
+In this project, a quantitative analysis of market reactions to Trump's social media events reveals that market performance is strongly correlated with the sentiment score of Trump's posts in certain assets and topics. Hence, a trading strategy is developed to execute trades based on the sentiment scores in Trump's posts. The results of our backtests support the profitability of our trading strategy.
 
 # Table of Contents
 - 📗 [Data Source](#data-source)
