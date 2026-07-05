@@ -189,39 +189,36 @@ A table of the trading signals of the latest 5 posts will be generated.
 
 Go through the steps in Quick start before continuing with the rest of the steps in this section.
 
-
 **Data collection**
 
-10. Scrape all of Trump's Truth Social text posts from the archive and saved into the file `trump_posts.py`.
+10. Scrape all of Trump's Truth Social text posts from the online archive and download the financial data corresponding to the time range of the posts. If your Massive account is on the free tier, it will take approximately 1 day to download all available financial data.
 ```
-python scrape_posts.py
+# Windows
+powershell -File ../scripts/download_data.ps1
+# MacOS/Linux
+bash ../scripts/download_data.sh
 ```
-
-11. Download the financial data corresponding to the time range of the posts. If your Massive account is on the free tier, it will take approximately 1 day to download all available financial data.
-```
-python download_market_data.py
-```
-You have downloaded all the raw data to be used in your analysis. Next, we process the raw data for event study.
+After downloading all the raw data to be used in our analysis, we then process the raw data for event study.
 
 **Event study**
 
-12. Navigate to the folder containing the C++ programs.
+11. Navigate to the folder containing the C++ programs.
 ```
 cd ../cpp
 ```
-13. Compile all C++ programs. This will create an EXE file of each C++ program.
+12. Compile all C++ programs. This will create an EXE file of each C++ program.
 ```
 .\compile.bat
 cd ../../
 ```
-14. Run `event_study_engine.exe`. The file `event_study_results.csv` containing the returns and volatility at various frequencies will be created in `data/` folder.
+13. Run `event_study_engine.exe`. The file `event_study_results.csv` containing the returns and volatility at various frequencies will be created in `data/` folder.
 ```
 .\src\cpp\event_study_engine.exe
 ```
 
 **Sentiment scoring and topic classification**
 
-15. Compute the sentiment scores of Trump's posts using the NLP model and classify each post into preset topics. The data will be saved into the file `trump_posts_nlp.csv`.
+14. Compute the sentiment scores of Trump's posts using the NLP model and classify each post into preset topics. The data will be saved into the file `trump_posts_nlp.csv`.
 ```
 cd src/python
 python nlp.py
@@ -230,15 +227,15 @@ python nlp.py
 
 These instructions will guide you to generate the predictive accuracy and feature importance visualizations presented in [Results](#-results). 
 
-16. On your file explorer, open the file `src/python/model_training.ipynb` with a code editor. 
-17. Run the code cells one-by-one to train and evaluate random forest models for predicting next returns, volatility and beta values, and the next direction of returns. 
+15. On your file explorer, open the file `src/python/model_training.ipynb` with a code editor. 
+16. Run the code cells one-by-one to train and evaluate random forest models for predicting next returns, volatility and beta values, and the next direction of returns. 
 
 **Backtesting of trading strategy**
 
 These instructions will guide you to generate the backtesting plots presented in [Results](#-results).
 
-18. On your file explorer, open the file `src/python/backtest_analysis.ipynb` with a code editor.
-19. Run the code cells one-by-one to run the file `src\cpp\backtester.exe` you had earlier compiled from its C++ program on "good" configurations of topic | asset | interval. 
+17. On your file explorer, open the file `src/python/backtest_analysis.ipynb` with a code editor.
+18. Run the code cells one-by-one to run the file `src\cpp\backtester.exe` you had earlier compiled from its C++ program on "good" configurations of topic | asset | interval. 
 
 That completes our analysis! (ﾉ^ヮ^)ﾉ*:・ﾟ✧
 
@@ -297,18 +294,19 @@ trump-market-analysis/
 │
 ├── src/
 │   ├── .env.example                # Example of .env file that stores API key and database details
-│   ├── scripts/
-│   │   └── download_data.sh        # Downloads all required market data
+│   ├── scripts/                    # Scripts that download all required raw data (runs scrape_posts.py and download_market_data.py)
+│   │   ├── download_data.ps1       # Windows Powershell script
+│   │   └── download_data.sh        # MacOS/Linux script
 │   │
 │   ├── python/
 │   │   ├── requirements.txt        # Required python packages for testing of project by GitHub Actions
 │   │   ├── print_latest_signals.py  # Generates trading signals without analysis
 │   │   ├── scrape_posts.py         # Scrapes Trump's posts
-│   │   ├── download_market_data.py # Configures downloading of market data
+│   │   ├── download_market_data.py # Downloads market data
 │   │   ├── nlp.py                  # Generates sentiment scores via NLP and classifies topics of posts
 │   │   ├── model_training.ipynb    # Visualizes predictive model's performance and feature importances
 │   │   ├── backtest_analysis.ipynb # Visualizes strategy performance during backtesting
-│   │   └── db_mananger.py          # Connection details and functions for interacting with the database
+│   │   └── db_mananger.py          # Functions for interacting with the database
 │   │
 │   └── cpp/
 │       ├── compile.bat             # Compiles all C++ programs
