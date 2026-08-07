@@ -162,14 +162,27 @@ open .env
 xdg-open .env
 ```
 
-6. Create an account on Massive.com and get your API key. In the opened `.env` file, set `MASSIVE_API_KEY` to your key, and `DB_USER` and `DB_PASSWORD` to the username and password of your chosen database.
+5. Log into your PostgreSQL server. 
+```
+psql -U <your-server-username>
 
-7. Create virtual environment.
+# When prompted for the server's password
+postgres=# <your-server-password>
+```
+
+6. Create a database on the server to store all your data.
+```
+CREATE DATABASE trump_market_analysis;
+```
+
+7. Create an account on Massive.com and get your API key. In the opened `.env` file, set `MASSIVE_API_KEY` to your key, and `DB_USER` and `DB_PASSWORD` to the username and password of your PostgreSQL server.
+
+8. Create virtual environment.
 ```
 python -m venv venv
 ```
 
-8. Activate virtual environment. 
+9. Activate virtual environment. 
 ```
 # Windows
 venv\Scripts\activate
@@ -177,7 +190,7 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-9. Navigate to the `python/` folder and install dependencies. 
+10. Navigate to the `python/` folder and install dependencies. 
 ```
 cd python
 pip install -r requirements.txt
@@ -201,7 +214,7 @@ Go through the steps in Quick start before continuing with the rest of the steps
 
 **Data collection**
 
-10. Scrape all of Trump's Truth Social text posts from the online archive and download the financial data corresponding to the time range of the posts. If your Massive account is on the free tier, it will take approximately 1 day to download all available financial data.
+11. Scrape all of Trump's Truth Social text posts from the online archive and download the financial data corresponding to the time range of the posts. If your Massive account is on the free tier, it will take approximately 1 day to download all available financial data.
 ```
 # Windows
 powershell -File ../scripts/download_data.ps1
@@ -212,23 +225,23 @@ After downloading all the raw data to be used in our analysis, we then process t
 
 **Event study**
 
-11. Navigate to the folder containing the C++ programs.
+12. Navigate to the folder containing the C++ programs.
 ```
 cd ../cpp
 ```
-12. Compile all C++ programs. This will create an EXE file of each C++ program.
+13. Compile all C++ programs. This will create an EXE file of each C++ program.
 ```
 .\compile.bat
 cd ../../
 ```
-13. Run `event_study_engine.exe`. The table `event_study_results` containing the returns, volatility, and beta values at various time intervals will be created in the PostgreSQL database `trump_market_analysis` .
+14. Run `event_study_engine.exe`. The table `event_study_results` containing the returns, volatility, and beta values at various time intervals will be created in the PostgreSQL database `trump_market_analysis` .
 ```
 .\src\cpp\event_study_engine.exe
 ```
 
 **Sentiment scoring and topic classification**
 
-14. Compute the sentiment scores of Trump's posts using the NLP model and classify each post into preset topics. The data will be updated in the PostgreSQL table `trump_posts`.
+15. Compute the sentiment scores of Trump's posts using the NLP model and classify each post into preset topics. The data will be updated in the PostgreSQL table `trump_posts`.
 ```
 cd src/python
 python nlp.py
@@ -237,15 +250,15 @@ python nlp.py
 
 These instructions will guide you to generate the predictive accuracy and feature importance visualizations presented in [Results](#-results). 
 
-15. On your file explorer, open the file `src/python/model_training.ipynb` with a code editor. 
-16. Run the code cells one-by-one to train and evaluate random forest models for predicting next returns, volatility and beta values, and the next direction of returns. 
+16. On your file explorer, open the file `src/python/model_training.ipynb` with a code editor. 
+17. Run the code cells one-by-one to train and evaluate random forest models for predicting next returns, volatility and beta values, and the next direction of returns. 
 
 **Backtesting of trading strategy**
 
 These instructions will guide you to generate the backtesting plots presented in [Results](#-results).
 
-17. On your file explorer, open the file `src/python/backtest_analysis.ipynb` with a code editor.
-18. Run the code cells one-by-one to run the file `src\cpp\backtester.exe` you had earlier compiled from its C++ program on "good" configurations of topic | asset | interval. 
+18. On your file explorer, open the file `src/python/backtest_analysis.ipynb` with a code editor.
+19. Run the code cells one-by-one to run the file `src\cpp\backtester.exe` you had earlier compiled from its C++ program on "good" configurations of topic | asset | interval. 
 
 That completes our analysis! (ﾉ^ヮ^)ﾉ*:・ﾟ✧
 
